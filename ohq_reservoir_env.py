@@ -59,6 +59,49 @@ def _import_ohq():
     return openhydroqual_py
 
 
+def new_ohq_system(ohq, workdir, t0, t1, dt, output_file, templates=("Reservoir_operation.json",)):
+    """An OHQ System with the main components plus `templates`, set up to run
+    [t0, t1] with a fixed step dt, single-threaded, writing to output_file."""
+    R = OHQ_RESOURCES
+    s = ohq.System()
+    s.set_default_template_path(R)
+    s.set_working_folder(workdir.rstrip("/") + "/")
+    s.set_silent(True)
+    s.load_template(R + "main_components.json")
+    for tmpl in templates:
+        s.add_template(R + tmpl)
+    settings = {
+        "simulation_start_time": f"{t0}",
+        "simulation_end_time": f"{t1}",
+        "initial_time_step": f"{dt}",
+        # Keep the step at dt0 so the day is resolved finely (OHQLib builds before
+        # 3e178fc also overshot t1 by the last, grown step).
+        "max_timestep_increase_factor": "1",
+        # One tiny model per worker: solver threads only oversubscribe the CPU.
+        "n_threads": "1",
+        "alloutputfile": output_file,
+    }
+    for k, v in settings.items():
+        # OHQLib builds before commit 300da66 return False even on success.
+        if not s.set_system_value(k, v):
+            raise ValueError(f"OHQ rejected system setting {k}={v}")
+    return s
+
+
+def read_outputs_at(output_file, t_target, names, rows_lag_one_step):
+    """Values of the named output columns at t_target, from an OHQ output file."""
+    with open(output_file) as f:
+        header = [h.strip() for h in f.readline().split(",")]
+    data = np.loadtxt(output_file, delimiter=",", skiprows=1, ndmin=2)
+    col = {name: i for i, name in enumerate(header) if name != "t"}
+    t = data[:, col[names[0]] - 1]
+    if rows_lag_one_step:
+        # Row k holds the state at the end of step k, but is stamped with
+        # the start time of step k; the end time is the next row's stamp.
+        t, data = t[1:], data[:-1]
+    return [float(np.interp(t_target, t, data[:, col[n]])) for n in names]
+
+
 class OHQBackend:
     """Builds and solves the reservoir model with OHQLib for one control interval."""
 
@@ -66,7 +109,6 @@ class OHQBackend:
         self.ohq = _import_ohq()
         self.S_cap, self.S_dead, self.Q_spill_max = S_cap, S_dead, Q_spill_max
         self.dt = solver_dt
-        self.strict_settings = True
         # Each instance gets its own folder: OHQ writes output.txt, errors.txt,
         # ... into the working folder.
         self.workdir = workdir or tempfile.mkdtemp(prefix="ohq_rl_")
@@ -80,29 +122,7 @@ class OHQBackend:
 
     def simulate_day(self, t0, storage0, release):
         """Run OHQ from t0 to t0+1 day. Returns (storage, released_vol, spilled_vol)."""
-        R, W = OHQ_RESOURCES, self.workdir + "/"
-        s = self.ohq.System()
-        s.set_default_template_path(R)
-        s.set_working_folder(W)
-        s.set_silent(True)
-        s.load_template(R + "main_components.json")
-        s.add_template(R + "Reservoir_operation.json")
-        settings = {
-            "simulation_start_time": f"{t0}",
-            "simulation_end_time": f"{t0 + 1}",
-            "initial_time_step": f"{self.dt}",
-            # Keep the step at dt0 so the day is resolved finely (OHQLib builds before
-            # 3e178fc also overshot t0+1 by the last, grown step).
-            "max_timestep_increase_factor": "1",
-            # One tiny model per worker: solver threads only oversubscribe the CPU.
-            "n_threads": "1",
-            "alloutputfile": self.output_file,
-        }
-        for k, v in settings.items():
-            # OHQLib builds before commit 300da66 return False even on success.
-            if not s.set_system_value(k, v) and self.strict_settings:
-                raise ValueError(f"OHQ rejected system setting {k}={v}")
-
+        s = new_ohq_system(self.ohq, self.workdir, t0, t0 + 1, self.dt, self.output_file)
         s.create_block("Reservoir", "Reservoir",
                        {"Storage": f"{storage0}", "inflow": self.inflow_file})
         s.create_block("River", "fixed_head", {"head": "0", "Storage": "0"})
@@ -120,20 +140,9 @@ class OHQBackend:
         return self._read_state_at(t0 + 1)
 
     def _read_state_at(self, t_target):
-        with open(self.output_file) as f:
-            header = [h.strip() for h in f.readline().split(",")]
-        data = np.loadtxt(self.output_file, delimiter=",", skiprows=1, ndmin=2)
-        col = {name: i for i, name in enumerate(header) if name != "t"}
-        t = data[:, col["Reservoir_Storage"] - 1]
-        if self.rows_lag_one_step:
-            # Row k holds the state at the end of step k, but is stamped with
-            # the start time of step k; the end time is the next row's stamp.
-            t, data = t[1:], data[:-1]
-
-        def at(name):
-            return float(np.interp(t_target, t, data[:, col[name]]))
-
-        return at("Reservoir_Storage"), at("River_Storage"), at("SpillSink_Storage")
+        return read_outputs_at(self.output_file, t_target,
+                               ["Reservoir_Storage", "River_Storage", "SpillSink_Storage"],
+                               self.rows_lag_one_step)
 
     def _detect_output_stamping(self):
         """Older OHQLib builds stamp each output row with the time at the start
@@ -257,12 +266,13 @@ class OHQReservoirEnv(gym.Env):
         self.backend.close()
 
 
-def rule_curve_policy(env, threshold=0.8):
+def rule_curve_policy(env, threshold=0.8, drawdown_days=1.0):
     """Baseline: standard operating policy plus a flood-control rule.
-    Release the demand; above threshold*S_cap, release the excess up to the
-    safe channel capacity. Returns an action in [-1, 1]."""
+    Release the demand D [m3/d]; above threshold*S_cap, also release the excess
+    storage [m3] over drawdown_days, up to the safe channel capacity.
+    Returns an action in [-1, 1]."""
     S, D = env.storage, env.demand[env.day]
     q = D
     if S > threshold * env.S_cap:
-        q = min(env.Q_safe, D + (S - threshold * env.S_cap))
+        q = min(env.Q_safe, D + (S - threshold * env.S_cap) / drawdown_days)
     return np.array([2.0 * q / env.Q_release_max - 1.0], dtype=np.float32)

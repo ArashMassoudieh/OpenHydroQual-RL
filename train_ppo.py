@@ -21,6 +21,9 @@ import torch.nn as nn
 import gymnasium as gym
 
 from ohq_reservoir_env import OHQReservoirEnv
+from ohq_cascade_env import CascadeEnv
+
+ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv}
 
 
 class ActorCritic(nn.Module):
@@ -52,9 +55,9 @@ class ActorCritic(nn.Module):
         return a.numpy(), d.log_prob(a).sum(-1).numpy(), self.value(obs).numpy()
 
 
-def make_env(rank, seed):
+def make_env(rank, seed, env_name="reservoir"):
     def thunk():
-        env = OHQReservoirEnv()
+        env = ENVS[env_name]()
         env.reset(seed=seed + rank)
         return env
     return thunk
@@ -64,7 +67,7 @@ def train(args):
     torch.set_num_threads(1)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    envs = gym.vector.AsyncVectorEnv([make_env(i, args.seed) for i in range(args.num_envs)],
+    envs = gym.vector.AsyncVectorEnv([make_env(i, args.seed, args.env) for i in range(args.num_envs)],
                                      context="spawn")
     obs_dim = envs.single_observation_space.shape[0]
     act_dim = envs.single_action_space.shape[0]
@@ -148,7 +151,7 @@ def train(args):
         print(f"update {update:3d}/{n_updates}  steps {steps:7d}  "
               f"episodes {len(finished_returns):4d}  "
               f"mean return (last 20) {np.mean(recent) if recent else float('nan'):8.3f}  "
-              f"std {model.log_std.exp().item():.3f}  "
+              f"std {model.log_std.exp().mean().item():.3f}  "
               f"{steps / (time.time() - t_start):.0f} steps/s", flush=True)
 
     envs.close()
@@ -158,6 +161,7 @@ def train(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
+    p.add_argument("--env", choices=sorted(ENVS), default="reservoir")
     p.add_argument("--total-steps", type=int, default=200_000)
     p.add_argument("--num-envs", type=int, default=8)
     p.add_argument("--rollout-steps", type=int, default=256)

@@ -3,6 +3,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{xcolor}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,decorations.pathmorphing}
@@ -20,8 +21,8 @@
 \newcommand{\Qsafe}{Q_{\mathrm{safe}}}
 \newcommand{\code}[1]{\texttt{#1}}
 
-\title{Reinforcement Learning for Reservoir Operation\\
-       with OpenHydroQual as the Simulator}
+\title{Learning Reservoir Operating Rules with Reinforcement Learning:\\
+       a Tutorial with OpenHydroQual as the Simulator}
 \author{OpenHydroQual-RL working notes}
 \date{\today}
 
@@ -29,21 +30,129 @@
 \maketitle
 
 \begin{abstract}
-We set up a closed-loop reinforcement learning (RL) problem in which a
-PyTorch agent operates a reservoir that is simulated by OpenHydroQual (OHQ)
-through its \code{openhydroqual\_py} Python bindings. The toy problem is a
-water-supply reservoir hit by random storms: each day the agent chooses a
-release that must balance meeting a downstream demand against downstream
-flooding and uncontrolled spill. We document every step: building the OHQ
-model from Python, verifying the simulator output against an analytical
-solution (which uncovered a one-step time-stamp lag in the current OHQLib
-build), wrapping it as a Gymnasium environment, training a Proximal Policy
-Optimization (PPO) agent, and comparing it with rule-based operating
-policies. We close with a performance analysis that motivates replacing the
-interpreted OHQ library with a codegen-compiled kernel.
+This report teaches reinforcement learning (RL) through a worked water
+resources example. RL is a way of \emph{learning an operating rule by
+trial and error in a simulator}. Here the simulator is an OpenHydroQual
+(OHQ) model, driven from Python, and the learner is a small neural network
+trained with PyTorch. We start with a single water-supply reservoir hit by
+random storms. Each day the learned rule chooses a release that must
+balance meeting a downstream demand against flooding the river and
+spilling water. We then move to a harder problem: two reservoirs in series
+with an uncontrolled tributary. Along the way we explain the RL concepts
+from the ground up, relating them to stochastic dynamic programming and
+model calibration. We also document the engineering: how the OHQ model is
+built from Python, how its output was verified against an exact solution
+(which uncovered and led to fixing two issues in OHQ), how training is
+parallelized, and how the learned rules compare with classical rule
+curves. No prior knowledge of RL is assumed; familiarity with hydrologic
+modeling and basic calculus and probability is.
 \end{abstract}
 
+\paragraph{How to read this report.} Section~\ref{sec:primer} is a
+self-contained introduction to RL. Its first half is conceptual, and its
+last part (Section~\ref{sec:primer_math}) gives the mathematics. Sections 3
+to 5 set up the first problem and the simulator. Section~\ref{sec:ppo}
+explains the learning algorithm (PPO) step by step. Section~\ref{sec:results}
+shows the results. Section~\ref{sec:cascade} repeats everything for the
+harder two-reservoir problem. A nomenclature list is at the front and an RL
+glossary at the end.
+
 \tableofcontents
+\newpage
+
+\section*{Nomenclature}
+\addcontentsline{toc}{section}{Nomenclature}
+Units: volumes in m$^3$, flows in m$^3$/d, time in days. Because each
+decision step is one day, a volume over a step (m$^3$) and the mean flow
+over that step (m$^3$/d) are numerically equal; this is why volumes are
+compared directly with $\Qsafe$ and $D_t$.
+
+\begin{longtable}{@{}p{0.19\textwidth}p{0.58\textwidth}p{0.15\textwidth}@{}}
+\toprule
+Symbol & Meaning & Value / unit\\
+\midrule
+\endhead
+\multicolumn{3}{@{}l}{\emph{Time and indices}}\\
+$t$ & time; as a subscript, the day index of a decision step covering $[t,t+1]$ & d\\
+$T$ & episode (season) length & 90 steps\\
+$t_0$ & start time of one OHQ simulation interval & d\\
+$k$ & forecast lead time & 1, 2, 3 d\\
+$j$ & storm index & --\\
+$\tau$ & time since the onset of a storm, $t-t_j$ & d\\
+$\Delta t_0$ & OHQ initial (and, in the environment, fixed) time step, \code{initial\_time\_step} & 0.05 d\\
+$\Delta t$ & decision interval (one day) & 1 d\\[3pt]
+\multicolumn{3}{@{}l}{\emph{Reservoir and structures}}\\
+$S(t),\,S_t$ & reservoir storage (continuous; at the start of day $t$) & m$^3$\\
+$S_0$ & initial storage of an episode, $\sim U(0.3,0.8)\Scap$; also of a single simulation interval & m$^3$\\
+$\Scap$ & storage at the spillway crest (capacity) & 50{,}000 m$^3$\\
+$S_{dead}$ & storage below which the outlet release tapers to zero & 200 m$^3$\\
+$Q_t$ & release requested by the policy for day $t$ & m$^3$/d\\
+$Q_{\mathrm{out}}$ & outlet capacity (maximum release) & 6{,}000 m$^3$/d\\
+$\Qsafe$ & safe capacity of the downstream channel & 3{,}000 m$^3$/d\\
+$Q_{\min},Q_{\max},$\newline$S_{\min},S_{\max}$ & parameters of the OHQ \code{Reservoir\_link\_rule} flow rule (Section~\ref{sec:ohqmodel}) & --\\
+$Q(S)$ & flow of a \code{Reservoir\_link\_rule} link as a function of storage & m$^3$/d\\
+$V^{in}_t,V^{rel}_t,V^{sp}_t$ & inflow, released and spilled volume during day $t$ & m$^3$\\[3pt]
+\multicolumn{3}{@{}l}{\emph{Forcing}}\\
+$Q_{in}(t)$ & reservoir inflow & m$^3$/d\\
+$q_b$ & mean base flow & 600 m$^3$/d\\
+$\beta$ & per-episode base-flow factor, $\sim U(0.7,1.3)$ & --\\
+$h_j(t)$ & hydrograph of storm $j$ & m$^3$/d\\
+$t_j$ & onset time of storm $j$ (probability 0.06 per day) & d\\
+$P_j$ & peak flow of storm $j$, $\sim U(5000,15000)$ & m$^3$/d\\
+$t_r$ & storm rise time & 0.5 d\\
+$k_j$ & recession constant of storm $j$, $\sim U(0.3,0.7)$ & d$^{-1}$\\
+$D(t),\,D_t$ & downstream demand (on day $t$) & m$^3$/d\\
+$\bar D$ & mean demand & 1{,}500 m$^3$/d\\
+$\psi$ & demand phase, $\sim U(0,2\pi)$ & rad\\
+$\hat F_{t+k}$ & forecast, issued on day $t$, of the daily-mean inflow on day $t+k$ & m$^3$/d\\
+$\sigma_F$ & log-normal forecast error scale, $0.2\sqrt{k}$ & --\\
+$\xi$ & all random elements of a season (storms, $\beta$, $\psi$, forecast errors, $S_0$) & --\\[3pt]
+\multicolumn{3}{@{}l}{\emph{MDP, reward and objective}}\\
+$o_t$ & observation (7 normalized features, Section~\ref{sec:mdp}) & --\\
+$a_t$ & action in $[-1,1]$; $Q_t=\tfrac12(a_t+1)Q_{\mathrm{out}}$ & --\\
+$r_t$ & reward of day $t$ & --\\
+$r_T^{\mathrm{term}}$ & terminal (end-of-season storage) reward & --\\
+$w_f,\,w_s,\,w_T$ & weights of the flood, spill and terminal penalties & 2, 1, 5\\
+$J(\pi)$ & objective: expected undiscounted season return, Eq.~\eqref{eq:objective} & --\\
+$J_\gamma(\pi)$ & discounted return maximized during training & --\\
+$\eta$ & flood-rule threshold of the rule-curve baselines (fraction of $\Scap$) & 0.8; tuned 0.4\\[3pt]
+\multicolumn{3}{@{}l}{\emph{PPO}}\\
+$\pi_\theta(a\mid o)$ & stochastic (Gaussian) policy with network parameters $\theta$ & --\\
+$\mu_\theta(o)$ & mean of the policy (actor network output) & --\\
+$\sigma$ & standard deviation of the policy (learned, state-independent) & $0.59\to0.15$\\
+$V_\phi(o)$ & value function (critic network) with parameters $\phi$ & --\\
+$\gamma$ & discount factor & 0.99\\
+$\lambda$ & GAE parameter & 0.95\\
+$\delta_t$ & temporal-difference error & --\\
+$\hat A_t$ & advantage estimate (GAE), normalized per update & --\\
+$\hat R_t$ & return target for the critic, $\hat A_t+V_\phi(o_t)$ & --\\
+$d_t$ & episode-end flag (1 on the last step of a season) & 0/1\\
+$\rho_t$ & probability ratio of the new to the old policy & --\\
+$\epsilon$ & PPO clipping parameter & 0.2\\
+$c_v$ & value-loss coefficient & 0.5\\
+$L(\theta)$ & PPO loss minimized by gradient descent & --\\[3pt]
+\multicolumn{3}{@{}l}{\emph{Two-reservoir cascade (Section~\ref{sec:cascade})}}\\
+$S^A_t,\,S^B_t$ & storage of reservoir A (upstream) and B (downstream) & m$^3$\\
+$S^A_{cap},\,S^B_{cap}$ & capacities (spillway crests) of A and B & 60{,}000; 30{,}000 m$^3$\\
+$S^A_n$ & storage of A at the end of solver step $n$ within a day & m$^3$\\
+$Q^A_t,\,Q^B_t$ & releases requested by the policy for A and B & m$^3$/d\\
+$Q^A_{\mathrm{out}},\,Q^B_{\mathrm{out}}$ & outlet capacities of A and B & 6{,}000; 8{,}000 m$^3$/d\\
+$Q^A_{in},Q^B_{in},Q^{tr}$ & inflow to A, to B, and tributary flow & m$^3$/d\\
+$q^B_t,\,q^{tr}_t$ & current (start-of-day) inflow to B and tributary flow & m$^3$/d\\
+$\bar P_c$ & storm peak scale of catchment $c$ & m$^3$/d\\
+$m$ & intensity of a regional storm, common to all catchments, $\sim U(0.5,1.5)$ & --\\
+$V^{rel,A}_t,V^{sp,A}_t$ & released and spilled volume of A during day $t$ (enter B) & m$^3$\\
+$V^{rel,B}_t,V^{sp,B}_t$ & released and spilled volume of B during day $t$ & m$^3$\\
+$V^{tr}_t$ & tributary volume during day $t$ & m$^3$\\
+$V^{riv}_t$ & river volume at the flood point, $V^{rel,B}_t+V^{sp,B}_t+V^{tr}_t$ & m$^3$\\
+$Q^{sup}_t$ & part of the demand the tributary does not supply (rule) & m$^3$/d\\
+$\eta_A,\,\eta_B$ & thresholds of the cascade rule (fractions of $S^A_{cap}$, $S^B_{cap}$) & --\\[3pt]
+\multicolumn{3}{@{}l}{\emph{Other}}\\
+$U(a,b)$ & uniform distribution on $[a,b]$ & --\\
+$\mathcal N(\mu,\sigma^2)$ & normal distribution & --\\
+$\mathbb E$ & expectation & --\\
+\bottomrule
+\end{longtable}
 \newpage
 
 %=====================================================================
@@ -95,15 +204,17 @@ environment, one backend and its own OHQ working folder.}
   \item \code{report/} -- this document.
 \end{itemize}
 
+\input{rl_primer.tex}
+
 %=====================================================================
-\section{Step 1: The toy problem}
+\section{The first problem: a single reservoir}
 %=====================================================================
 
 \subsection{System}
 A single reservoir with spillway-crest storage $\Scap = 50{,}000$~m$^3$
 receives a low base flow plus random storm hydrographs
 (Figure~\ref{fig:schematic}). The operator controls the release $Q_t$
-through an outlet works with capacity $Q_{\max}=6{,}000$~m$^3$/d. The
+through an outlet works with capacity $Q_{\mathrm{out}}=6{,}000$~m$^3$/d. The
 downstream channel floods when its flow exceeds
 $\Qsafe=3{,}000$~m$^3$/d. Water above $\Scap$ leaves over an uncontrolled
 emergency spillway. Downstream users need a demand $D(t)$ with a mean of
@@ -145,10 +256,10 @@ h_j(t) &= P_j\begin{cases} \tau/t_r & 0\le\tau<t_r\\ e^{-k_j(\tau-t_r)} & \tau\g
 with storm onsets $t_j$ arriving with probability $0.06$ per day, peaks
 $P_j\sim U(5000,15000)$~m$^3$/d, rise time $t_r=0.5$~d and recession
 constants $k_j\sim U(0.3,0.7)$~d$^{-1}$. The demand is
-$D(t)=\bar D\,[1+0.3\sin(2\pi t/90+\phi)]$ with a random phase $\phi$. The
+$D(t)=\bar D\,[1+0.3\sin(2\pi t/T+\psi)]$ with a random phase $\psi\sim U(0,2\pi)$. The
 agent also receives a noisy forecast of the daily-mean inflow for the next
 1, 2 and 3 days, with multiplicative log-normal errors that grow with lead
-time ($\sigma=0.2\sqrt{\text{lead}}$). Figure~\ref{fig:forcing} shows
+time ($\sigma_F=0.2\sqrt{k}$ for lead $k$ days). Figure~\ref{fig:forcing} shows
 three realizations.
 
 \begin{figure}[h]
@@ -159,13 +270,13 @@ channel capacity).}
 \label{fig:forcing}
 \end{figure}
 
-\subsection{MDP formulation}
+\subsection{MDP formulation}\label{sec:mdp}
 \begin{description}\itemsep2pt
-\item[Decision step:] one day; episode length 90 steps. The initial storage is drawn from $U(0.3,0.8)\,\Scap$.
+\item[Decision step:] one day; episode length $T=90$ steps ($t=0,\dots,T-1$). The initial storage is drawn from $U(0.3,0.8)\,\Scap$.
 \item[Observation] ($7$-dim, normalized):
 \[o_t=\big(S_t/\Scap,\; Q_{in}(t)/\Qsafe,\; \hat F_{t+1}/\Qsafe,\; \hat F_{t+2}/\Qsafe,\; \hat F_{t+3}/\Qsafe,\; D_t/\Qsafe,\; 1-t/90\big),\]
 where $\hat F_{t+k}$ is the $k$-day-ahead forecast of the daily-mean inflow.
-\item[Action:] $a_t\in[-1,1]$, mapped to the target release $Q_t=\tfrac12(a_t+1)\,Q_{\max}$.
+\item[Action:] $a_t\in[-1,1]$, mapped to the target release $Q_t=\tfrac12(a_t+1)\,Q_{\mathrm{out}}$.
 \item[Transition:] one-day OHQ simulation (Section~\ref{sec:ohqmodel}).
 \item[Reward:] with $V^{rel}_t$ and $V^{sp}_t$ the released and spilled volumes over the day,
 \begin{equation}
@@ -174,16 +285,60 @@ r_t = -\Big(\frac{\max(0,D_t-V^{rel}_t)}{D_t}\Big)^2
       - w_s\,\frac{V^{sp}_t}{\Qsafe},
 \end{equation}
 with $w_f=2$ and $w_s=1$. At the end of the season a terminal penalty
-$-w_T\max(0,\,0.5\Scap-S_{90})/\Scap$ ($w_T=5$) discourages emptying the
+$r_T^{\mathrm{term}}=-w_T\max(0,\,0.5\Scap-S_T)/\Scap$ ($w_T=5$) discourages emptying the
 reservoir to avoid all flood risk.
 \end{description}
+\subsection{The objective function}\label{sec:objective}
+Let $\xi$ denote everything random in a season: the storm onsets, peaks and
+recessions, the base-flow factor $\beta$, the demand phase $\psi$, the
+forecast errors and the initial storage $S_0$. An operating policy $\pi$ maps
+the observation $o_t$ to a release $Q_t$. The quantity we want to
+\emph{maximize} is the expected season return
+\begin{equation}
+J(\pi) \;=\; \mathbb{E}_{\xi}\Big[\sum_{t=0}^{T-1} r_t \;+\; r_T^{\mathrm{term}}\Big],
+\label{eq:objective}
+\end{equation}
+equivalently, we \emph{minimize} the expected season cost
+\[
+\mathbb{E}_{\xi}\Big[\sum_{t=0}^{T-1}\Big(\underbrace{\Big(\tfrac{\max(0,D_t-V^{rel}_t)}{D_t}\Big)^2}_{\text{supply deficit}}
+ + \underbrace{w_f\,\tfrac{\max(0,V^{rel}_t+V^{sp}_t-\Qsafe)}{\Qsafe}}_{\text{downstream flooding}}
+ + \underbrace{w_s\,\tfrac{V^{sp}_t}{\Qsafe}}_{\text{uncontrolled spill}}\Big)
+ + \underbrace{w_T\,\tfrac{\max(0,\,0.5\Scap-S_T)}{\Scap}}_{\text{end-of-season storage}}\Big],
+\]
+subject to the reservoir dynamics simulated by OHQ,
+$S_{t+1}=S_t+V^{in}_t-V^{rel}_t-V^{sp}_t$, the outlet and spillway rules of
+Section~\ref{sec:ohqmodel}, and $0\le Q_t\le Q_{\mathrm{out}}$. All terms
+are dimensionless, so the weights $w_f=2$, $w_s=1$, $w_T=5$ set the
+trade-off: one day of flow 100\% above $\Qsafe$ costs as much as two days of
+a total supply failure.
+
+Two versions of this objective appear in the report:
+\begin{itemize}
+\item \textbf{Evaluation} (Section~\ref{sec:results}) uses
+Eq.~\eqref{eq:objective} directly: the undiscounted return of each test
+season, averaged over 30 held-out seasons. This is the ``return'' in all
+tables and plots.
+\item \textbf{Training.} PPO maximizes the \emph{discounted} return
+$J_\gamma(\pi_\theta)=\mathbb{E}\big[\sum_t \gamma^t r_t\big]$ with
+$\gamma=0.99$, through the clipped surrogate $L(\theta)$ of
+Section~\ref{sec:ppo}. Over a 90-day season, $\gamma^{89}\approx0.41$, so the
+training objective weights late-season penalties, including the terminal
+storage term, at roughly half their evaluation weight. This is a standard
+variance-reduction compromise. It may explain part of the late-season
+over-drawdown seen in Figure~\ref{fig:traj_med}; training with $\gamma$
+closer to 1 is a cheap thing to try.
+\end{itemize}
+The baselines are not optimized by PPO: the tuned rule curve maximizes the
+same Eq.~\eqref{eq:objective} by a one-dimensional grid search over its
+threshold $\eta$.
+
 The trade-off is the classic one: a full reservoir secures supply but leaves
 no room to absorb storms, while an empty one does the opposite. The release
 needed to make room is itself limited by $\Qsafe$, so the agent must
 pre-release \emph{before} a forecast storm arrives.
 
 %=====================================================================
-\section{Step 2: Building the OHQ model from Python}\label{sec:ohqmodel}
+\section{Building the OHQ model from Python}\label{sec:ohqmodel}
 %=====================================================================
 
 \subsection{Python bindings}
@@ -263,7 +418,7 @@ applied (fixed in OHQ, see the last section), and the \code{Reservoir\_link\_rul
 harmless \emph{``property `ft' does not exist''} messages.
 
 %=====================================================================
-\section{Step 3: Verifying the simulator output}
+\section{Verifying the simulator output}
 %=====================================================================
 
 Before using OHQ inside an RL loop we checked it against a case with an
@@ -336,63 +491,34 @@ inflow volume.}
 \label{fig:massbalance}
 \end{figure}
 
-%=====================================================================
-\section{Step 4: The RL algorithm (PPO)}
-%=====================================================================
-
-We use Proximal Policy Optimization \cite{schulman2017ppo} with
-generalized advantage estimation (GAE) \cite{schulman2016gae},
-implemented directly in PyTorch (\code{train\_ppo.py}).
-
-\paragraph{Networks.} Separate actor and critic MLPs ($7\to64\to64$,
-$\tanh$ activations). The policy is Gaussian,
-$\pi_\theta(a\mid o)=\mathcal N(\mu_\theta(o),\sigma^2)$, with a learned,
-state-independent $\log\sigma$ (initialized at $-0.5$). Sampled actions are
-clipped to $[-1,1]$ by the environment. At evaluation time the
-deterministic action $\mathrm{clip}(\mu_\theta(o))$ is used.
-
-\paragraph{Objective.} With probability ratio
-$\rho_t=\pi_\theta(a_t|o_t)/\pi_{\theta_{old}}(a_t|o_t)$ and normalized advantages $\hat A_t$,
-\begin{equation}
-L(\theta)= -\,\mathbb E_t\big[\min(\rho_t\hat A_t,\;\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t)\big]
-          + c_v\,\mathbb E_t\big[(V_\phi(o_t)-\hat R_t)^2\big]/2 ,
-\end{equation}
-\begin{equation}
-\hat A_t=\sum_{l\ge0}(\gamma\lambda)^l\delta_{t+l},\qquad
-\delta_t=r_t+\gamma V_\phi(o_{t+1})(1-d_t)-V_\phi(o_t).
-\end{equation}
-
-\paragraph{Hyperparameters.}
-\begin{center}
-\begin{tabular}{lr@{\hspace{2em}}lr}
-\toprule
-parallel environments & 16 & discount $\gamma$ & 0.99 \\
-rollout length per env & 256 & GAE $\lambda$ & 0.95 \\
-samples per update & 4096 & clip $\epsilon$ & 0.2 \\
-epochs per update & 10 & value coefficient $c_v$ & 0.5 \\
-minibatch size & 256 & learning rate (Adam) & $3\times10^{-4}$ \\
-total environment steps & 409{,}600 & gradient-norm clip & 0.5 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\paragraph{Parallel rollouts.} Rollouts run in 16 worker processes
-(\code{gymnasium.vector.AsyncVectorEnv}, \code{spawn} context), each with
-its own OHQ instance. Gymnasium's ``next-step'' autoreset produces one
-dummy transition after every episode end. These are masked out of the
-update.
-
-\paragraph{A performance pitfall.} The first parallel run made almost no
-progress. Every worker sat at $\approx370\%$ CPU because OHQ's solver
-defaults to \code{n\_threads = 8} (OpenMP), and BLAS/PyTorch add their own
-threads. Sixteen workers times eight threads oversubscribed the 32-core
-machine. Setting \code{n\_threads = 1} in OHQ and
-\code{OMP\_NUM\_THREADS = 1} / \code{torch.set\_num\_threads(1)} in the
-workers raised throughput to $\approx1{,}200$ environment steps per second.
+\input{ppo_section.tex}
 
 %=====================================================================
-\section{Step 5: Results}
+\section{Results for the single reservoir}\label{sec:results}
 %=====================================================================
+
+\subsection{How we judge a policy}
+A learned policy is only useful if it performs well on seasons it has
+never seen. The procedure, used throughout, is:
+\begin{itemize}\itemsep1pt
+\item \textbf{Held-out test seasons.} Thirty seasons generated from seeds
+that were never used in training (seeds $10{,}000$--$10{,}029$). Every
+policy faces exactly the same 30 storm sequences.
+\item \textbf{Score.} The season return of Eq.~\eqref{eq:objective}:
+minus the total penalty, so 0 is perfect and higher is better. We also
+report its components (supply, flood, spill, terminal).
+\item \textbf{Paired comparison.} Some seasons are much stormier than
+others, so the spread of returns across seasons is large for \emph{every}
+policy. Comparing means alone mixes up policy quality with weather luck.
+Because all policies see the same seasons, we instead compute, season by
+season, the difference in return between PPO and a baseline. We report its
+mean and its standard error (standard deviation over $\sqrt{30}$). A mean
+difference larger than about twice its standard error is unlikely to be
+luck. We also count in how many of the 30 seasons PPO did better.
+\item \textbf{Fair baselines.} A comparison is only as good as its
+opponent, so the rule curve's parameter is tuned on a separate set of
+seasons before testing.
+\end{itemize}
 
 \subsection{Training}
 \input{training_summary.tex}
@@ -411,9 +537,10 @@ We evaluate three policies on the same 30 held-out storm sequences
 \begin{description}\itemsep2pt
 \item[Demand only:] release $Q_t=D_t$.
 \item[Rule curve (0.8):] a standard operating policy with a flood rule:
-release $D_t$, and above $\theta\Scap$ release
-$\min(\Qsafe,\,D_t+(S_t-\theta\Scap))$, with $\theta=0.8$.
-\item[Tuned rule:] the same rule with $\theta$ tuned by grid search on
+release $D_t$, and above $\eta\Scap$ also release the excess storage over
+one day: $Q_t=\min\big(\Qsafe,\,D_t+(S_t-\eta\Scap)/\Delta t\big)$ with
+$\Delta t=1$~d, and $\eta=0.8$.
+\item[Tuned rule:] the same rule with $\eta$ tuned by grid search on
 separate seeds (see below).
 \item[PPO:] the trained agent (deterministic).
 \end{description}
@@ -464,7 +591,7 @@ demand at mid-season.}
 \end{figure}
 
 %=====================================================================
-\section{Step 6: Performance and the case for a codegen backend}\label{sec:performance}
+\section{Performance and the case for a codegen backend}\label{sec:performance}
 %=====================================================================
 
 RL needs a very large number of short simulations; this run alone used
@@ -507,6 +634,8 @@ and is passed to the environment as \code{OHQReservoirEnv(backend=...)}.
 A compiled kernel that keeps its state in memory between calls would also
 remove the per-step file round trip and the template parsing, and would
 allow batched, vectorized rollouts within a single process.
+
+\input{cascade_section.tex}
 
 %=====================================================================
 \section{Limitations and next steps}
@@ -551,6 +680,8 @@ cd report && latexmk -pdf main.tex
 \end{lstlisting}
 The paths of the bindings and templates can be overridden with the
 \code{OHQ\_PY\_PATH} and \code{OHQ\_RESOURCES} environment variables.
+
+\input{glossary.tex}
 
 \begin{thebibliography}{9}
 \bibitem{schulman2017ppo} J.~Schulman, F.~Wolski, P.~Dhariwal, A.~Radford, O.~Klimov.

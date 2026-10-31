@@ -1,0 +1,61 @@
+\paragraph{Headline.} In the cascade, PPO beats every baseline, including
+the rule with tuned thresholds. Against the tuned rule, the season-by-season
+difference is $+1.79\pm0.67$: about 2.7 standard errors, with PPO better in
+22 of the 30 test seasons (Table~\ref{tab:cascade_paired}). In the
+single-reservoir problem the same comparison was a statistical tie. The
+extra difficulty of coordinating two reservoirs around an uncontrolled
+tributary is what lets the learned policy pull ahead. The size of the gain
+over the tuned rule is modest (about 13\% of its penalty), but it is
+consistent.
+
+\paragraph{Where the gain comes from.} Table~\ref{tab:cascade_results}
+splits the return into its parts. Compared with the tuned rule, PPO
+spills 23\% less water (13{,}800 versus 17{,}900~m$^3$ per season), floods
+the river on fewer days (8.5 versus 11.4), and has a slightly smaller
+supply penalty with the same total shortfall ($\approx5\%$ of demand). The
+three trajectory figures show the mechanisms:
+\begin{itemize}
+\item \textbf{Hedging in droughts (Figure~\ref{fig:cascade_traj_med}).}
+In this median season a long dry spell empties both reservoirs under every
+policy. The rules deliver the full demand until the water runs out and
+then deliver almost nothing for about 20 days. PPO starts delivering
+somewhat less than demand around day 15, \emph{before} the reservoirs are
+empty, and stretches its storage further. Because the supply penalty is
+\emph{squared}, many small shortfalls cost less than a few large ones:
+spreading a 1{,}000~m$^3$/d deficit over twice as many days at half the
+size halves its penalty. This is the classic \emph{hedging rule} of
+reservoir operation theory. The agent was never told about it; it
+discovered it from the shape of the reward.
+\item \textbf{Anticipating storms (Figure~\ref{fig:cascade_traj_best}).}
+In this storm-rich season PPO raises releases ahead of forecast storms, up
+to and slightly above $\Qsafe$, and keeps more room in B, so the storms
+around days 40--47 cause far less spill than under the rules.
+\item \textbf{Where it loses (Figure~\ref{fig:cascade_traj_worst}).} In
+the season where PPO does worst relative to the tuned rule, a cluster of
+storms arrives at the very end of the season. The tuned rule happened to
+be holding A very low (its 20\% threshold) and absorbed more of it. PPO,
+which also weighs the end-of-season storage term, was fuller and spilled
+more. A learned policy is better \emph{on average}, not in every season.
+\end{itemize}
+
+\paragraph{The rule baselines.} The threshold map
+(Figure~\ref{fig:cascade_tuning}) shows the logic of the best rule: keep
+the large upstream reservoir low ($\eta_A=0.2$) and the small downstream
+one at half ($\eta_B=0.5$), so that A's slow, large storm volumes have room
+while B buffers the fast local response. Even tuned, the rule cannot
+\emph{change} these targets with the forecast or the season, and that
+flexibility is what PPO adds. ``Supply only'', which never releases for
+flood space, shows how much is at stake: it spills about 91{,}000~m$^3$ per
+season and scores $-38.6$.
+
+\paragraph{Lessons for applying RL.}
+\begin{enumerate}\itemsep1pt
+\item RL helps most where simple rules are structurally limited: several
+interacting storages, uncontrolled inflows and forecasts. For one
+reservoir, a well-tuned rule was as good.
+\item The reward shapes the behavior. The hedging seen here follows from
+the squared deficit penalty, and a linear penalty would not produce it.
+\item Fair comparison requires tuned baselines, identical test seasons and
+paired statistics. Against the untuned rule the gain would have looked
+twice as large ($+3.7$).
+\end{enumerate}

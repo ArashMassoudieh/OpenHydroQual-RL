@@ -1,0 +1,299 @@
+%=====================================================================
+\section{Reinforcement learning in a nutshell}\label{sec:primer}
+%=====================================================================
+
+This section explains the ideas behind reinforcement learning (RL) for a
+reader who knows hydrologic modeling and calibration but has not used RL.
+Everything later in the report builds on it. The glossary at the end of the
+report collects the terms.
+
+\subsection{What problem does RL solve?}
+Think of a reservoir operator. Every morning they look at the reservoir
+level, the current inflow and the weather forecast, and decide how much
+water to release today. Tomorrow they see the consequences and decide
+again. The goal is not to make each single day look good. It is to do well
+over the whole season: to meet demand, avoid floods and not waste water
+over the spillway. The operator does not know the future storms, so a good
+decision now must hedge against many possible futures.
+
+This is a \emph{sequential decision problem under uncertainty}. RL is a
+family of methods that \emph{learn a decision rule for such problems by
+trial and error}: they try decisions in a simulator, observe what happens
+and gradually improve the rule. In this report, the simulator is an
+OpenHydroQual model.
+
+\paragraph{How this differs from calibration.} In model calibration we
+search for \emph{parameter values} that make a model fit observed data
+(for example with a genetic algorithm or Levenberg--Marquardt). In RL we
+search for a \emph{decision rule}, called a \emph{policy}: a function that
+maps what the operator sees to what the operator does. The rule is judged
+by how well it performs over many simulated futures, not by how well it
+fits data.
+
+\paragraph{Why not just optimize the release schedule?} One could fix a
+storm sequence and optimize the 90 daily releases for it. But real storms
+are unknown in advance. A schedule that is optimal for one storm sequence
+can be disastrous for another: it might release water ahead of a storm that
+never comes. What we need is a rule that \emph{reacts} to what it observes
+(closed-loop control) instead of a fixed plan (open-loop control). Classical
+alternatives each have a catch:
+\begin{itemize}\itemsep1pt
+\item \textbf{Rule curves} are hand-designed rules with a few parameters
+(for example, ``release extra water above 80\% full''). They are simple and
+transparent but limited to the shape the designer chose.
+\item \textbf{Stochastic dynamic programming} finds the optimal rule
+exactly, but its cost explodes with the number of state variables (the
+``curse of dimensionality''). The cascade in Section~\ref{sec:cascade} has
+16 observed quantities, far beyond what it can handle.
+\item \textbf{Model predictive control} re-optimizes a plan every day over
+a forecast horizon. It needs a fast optimizer inside the loop and a model
+of forecast uncertainty.
+\end{itemize}
+RL instead learns a flexible rule (here a small neural network) directly
+from simulations. The price is that it needs a lot of them, hundreds of
+thousands of simulated days here, which is why simulator speed matters
+(Section~\ref{sec:performance}).
+
+\subsection{The agent--environment loop}
+RL describes the problem as a loop between an \emph{agent} (the decision
+maker) and an \emph{environment} (everything else) (Figure~\ref{fig:loop}).
+At each step $t$:
+\begin{enumerate}\itemsep1pt
+\item the agent receives an \textbf{observation} $o_t$, the information
+available for the decision (storage, inflow, forecasts, demand, \dots);
+\item it chooses an \textbf{action} $a_t$ (here, today's release);
+\item the environment advances one step (here, OHQ simulates one day) and
+returns a \textbf{reward} $r_t$, one number that scores how good that step
+was, together with the next observation $o_{t+1}$.
+\end{enumerate}
+A sequence of steps from a start to an end is an \textbf{episode}; here one
+episode is one 90-day season with its own random storms. The sum of the
+rewards over an episode is the \textbf{return}. The agent's goal is to
+choose actions that make the return as large as possible \emph{on average
+over all the seasons it might face}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth, font=\small,
+  box/.style={draw, rounded corners, align=center, minimum height=1.5cm, text width=3.4cm, fill=#1}]
+  \node[box=blue!8] (agent) at (0,0) {\textbf{Agent} (policy $\pi$)\\the operator's decision rule: a neural network};
+  \node[box=green!8] (env) at (9.6,0) {\textbf{Environment}\\OHQ reservoir model + random storms and demand};
+  \draw[->, thick] ([yshift=4mm]agent.east) -- node[above, align=center, font=\footnotesize]{action $a_t$ (release today)} ([yshift=4mm]env.west);
+  \draw[->, thick] ([yshift=-4mm]env.west) -- node[below, align=center, font=\footnotesize]{reward $r_t$ (score of the day)\\observation $o_{t+1}$ (what is seen next)} ([yshift=-4mm]agent.east);
+\end{tikzpicture}
+\caption{The agent--environment loop, repeated once per simulated day.}
+\label{fig:loop}
+\end{figure}
+
+\paragraph{Designing the reward is designing the objective.} The agent
+optimizes exactly what the reward measures and nothing else. Here the
+reward penalizes supply deficits, downstream flooding, spill and ending
+the season empty (Section~\ref{sec:objective}). If a penalty were missing
+the agent would ignore that concern, and if a weight were too large it
+would over-react to it. Choosing the reward is the main place where
+engineering judgment enters.
+
+\paragraph{Observation versus state.} The \emph{state} is everything that
+determines the future. The \emph{observation} is what the agent actually
+sees. The agent never sees future storms, only noisy forecasts of them, so
+it must act well despite incomplete information, exactly like a real
+operator.
+
+\paragraph{Discounting.} Many RL methods maximize a \emph{discounted}
+return, $r_0+\gamma r_1+\gamma^2 r_2+\dots$, with a discount factor $\gamma$
+slightly below 1 (here $0.99$). Rewards far in the future count a little
+less. This makes learning more stable, because distant consequences are
+hard to attribute to today's action. The price is a mild preference for
+the near term (discussed in Section~\ref{sec:objective}).
+
+\subsection{The policy}
+The \textbf{policy} $\pi$ is the decision rule: given $o_t$, it returns
+$a_t$. A rule curve is a policy with one or two parameters. RL uses a much
+more flexible function, a small \textbf{neural network}. Here it is a stack
+of two layers of 64 simple nonlinear units, which can represent smooth
+functions of all the observed quantities at once. Its adjustable numbers,
+the \emph{weights}, collectively written $\theta$, play the role that model
+parameters play in calibration. Training an RL agent means adjusting
+$\theta$.
+
+During training the policy is \textbf{stochastic}: the network outputs a
+\emph{mean} release, and the actual release is drawn from a bell curve
+around it. This random perturbation is how the agent \textbf{explores},
+trying slightly different actions to discover which work better. The
+width of the bell curve, $\sigma$, is learned too, and it shrinks as the
+agent becomes confident (see the learning curves). When we \emph{use} the
+trained policy for evaluation, we switch the randomness off and apply the
+mean action.
+
+\subsection{How learning works, in one paragraph}
+The agent plays many seasons in the simulator with its current policy and
+records what happened. For every decision it asks: \emph{did things turn
+out better or worse than expected after this action?} It then adjusts
+$\theta$ so that actions that turned out better than expected become more
+likely, and actions that turned out worse become less likely. Then it plays
+more seasons with the improved policy, and so on. Two difficulties make
+this harder than it sounds:
+\begin{itemize}\itemsep1pt
+\item \textbf{Credit assignment.} A flood on day 50 may be the fault of a
+decision on day 40 not to release water. The agent must work out which
+earlier actions deserve the blame. It does this with a \emph{value
+function} (next paragraph).
+\item \textbf{Noise.} Two seasons can differ wildly in storminess, so a
+bad outcome may be bad luck rather than a bad action. Comparing against
+``what was expected'' filters out much of this luck.
+\end{itemize}
+
+\paragraph{The value function (the ``critic'').} Alongside the policy, a
+second neural network $V_\phi(o)$ learns to predict the return still to
+come from a given situation: roughly, ``how good is it to be here?''. It
+is like a forecast of the remaining season's score given today's storage,
+inflows and forecasts. Comparing what actually happened after an action
+with this prediction tells the agent whether the action was better or
+worse than expected. The policy network is then called the \emph{actor}
+and the value network the \emph{critic}, and the method an
+\emph{actor--critic} method. Section~\ref{sec:ppo} gives the details for
+the specific algorithm used, PPO.
+
+\subsection{The same ideas in equations}\label{sec:primer_math}
+This subsection states the ideas above precisely. It assumes comfort with
+probability and calculus, and makes the link to stochastic dynamic
+programming (SDP), which many water resources engineers know from
+reservoir operation.
+
+\paragraph{Markov decision process.} The problem is formalized as a
+\emph{Markov decision process} (MDP): states $s\in\mathcal S$, actions
+$a\in\mathcal A$, a transition law $p(s_{t+1}\mid s_t,a_t)$, a reward
+function $r_t=r(s_t,a_t,s_{t+1})$ and a horizon $T$. ``Markov'' means the
+next state depends only on the current state and action, not on the
+earlier history. In our problem the state contains the storage, the
+current and future storm hydrographs and the demand. The transition law is
+the OHQ mass balance plus the random weather. Crucially, we \emph{never
+write $p$ down}: we can only \emph{sample} from it by running the
+simulator. This is the key practical difference from SDP, which needs $p$
+explicitly as transition probabilities on a discretized grid.
+
+\paragraph{Policy and objective.} A stochastic policy $\pi_\theta(a\mid o)$
+is a probability density over actions given the observation, with
+parameters $\theta$. In this report it is a normal density,
+\[
+\pi_\theta(a\mid o)=\frac{1}{\sqrt{2\pi}\,\sigma}\exp\!\Big(-\frac{(a-\mu_\theta(o))^2}{2\sigma^2}\Big),
+\]
+whose mean $\mu_\theta(o)$ is the output of the neural network. A
+\emph{trajectory} $\tau=(o_0,a_0,r_0,o_1,a_1,r_1,\dots)$ is one simulated
+season, and its discounted return is $G(\tau)=\sum_{t=0}^{T-1}\gamma^t r_t$.
+The goal is to find
+\begin{equation}
+\theta^\star=\arg\max_\theta\; J(\theta),\qquad J(\theta)=\mathbb E_{\tau\sim\pi_\theta}\big[G(\tau)\big],
+\label{eq:rl_objective}
+\end{equation}
+where the expectation is over the random weather \emph{and} the policy's
+own randomness. This is an optimization over $\theta$, just like
+calibration. The difference is that the objective is an expectation we can
+only estimate by simulating seasons.
+
+\paragraph{Value functions and the Bellman equation.} The \emph{value} of a
+state under policy $\pi$ is the expected return still to come,
+\[
+V^\pi(s_t)=\mathbb E_\pi\Big[\sum_{k=0}^{T-1-t}\gamma^k r_{t+k}\;\Big|\;s_t\Big],
+\]
+and the \emph{action value} $Q^\pi(s,a)$ is the same quantity when action
+$a$ is taken first and $\pi$ is followed afterwards. Splitting off the
+first reward gives the \emph{Bellman equation}
+\begin{equation}
+V^\pi(s_t)=\mathbb E\big[r_t+\gamma\,V^\pi(s_{t+1})\big],
+\qquad
+V^\star(s_t)=\max_{a}\;\mathbb E\big[r_t+\gamma\,V^\star(s_{t+1})\;\big|\;s_t,a\big].
+\label{eq:bellman}
+\end{equation}
+The right-hand equation is exactly the backward recursion of SDP for
+reservoir operation: the best value today is the best immediate reward plus
+the expected (discounted) value of tomorrow's storage. SDP solves it by
+discretizing the state (for example storage into 50 classes and inflow into
+10) and sweeping backward in time. This is exact but needs the transition
+probabilities, and the grid grows exponentially with the number of state
+variables. With the 16 observed quantities of the cascade problem, a grid
+of only 10 levels each would have $10^{16}$ cells. RL keeps the Bellman
+logic but (i) replaces the grid by neural networks that approximate $V$ and
+$\pi$ smoothly, and (ii) replaces the transition probabilities by simulated
+samples. In this sense RL is \emph{approximate, simulation-based dynamic
+programming}.
+
+\paragraph{The policy gradient.} To improve $\theta$ by gradient ascent we
+need $\nabla_\theta J$, but $J$ is an expectation over simulator runs, and
+the simulator (OHQ) is not differentiable. The \emph{log-derivative trick}
+gets around this. Write the probability of a trajectory as
+$P_\theta(\tau)=p(s_0)\prod_t\pi_\theta(a_t\mid o_t)\,p(s_{t+1}\mid s_t,a_t)$.
+Then
+\[
+\nabla_\theta J=\nabla_\theta\!\int\!P_\theta(\tau)G(\tau)\,d\tau
+=\int\!P_\theta(\tau)\,\nabla_\theta\log P_\theta(\tau)\,G(\tau)\,d\tau
+=\mathbb E_{\tau}\Big[G(\tau)\sum_t\nabla_\theta\log\pi_\theta(a_t\mid o_t)\Big],
+\]
+because $\nabla P=P\,\nabla\log P$, and the transition terms $p(\cdot)$ do
+not depend on $\theta$, so their log-derivatives vanish. \emph{The physics
+drops out}: we only need to differentiate our own policy network, never the
+simulator. The expectation can be estimated by averaging over simulated
+seasons. In words: push up the log-probability of every action in a season
+in proportion to how good that season was.
+
+\paragraph{Reducing the noise: baselines and advantages.} That estimator is
+correct but extremely noisy: a stormy season punishes every action in it,
+good or bad. Two refinements fix most of this. (i) An action cannot affect
+rewards that came before it, so only the reward \emph{after} step $t$ is
+used to judge $a_t$. (ii) Subtracting any function of the observation,
+$b(o_t)$, does not change the expected gradient, because
+$\mathbb E_{a\sim\pi}[\nabla_\theta\log\pi_\theta(a\mid o)]=\nabla_\theta\!\int\!\pi_\theta\,da=\nabla_\theta 1=0$.
+But a good choice of $b$ greatly reduces the variance. The best simple
+choice is the value function itself, which gives
+\begin{equation}
+\nabla_\theta J=\mathbb E\Big[\sum_t \nabla_\theta\log\pi_\theta(a_t\mid o_t)\;A^\pi(o_t,a_t)\Big],
+\qquad A^\pi(o_t,a_t)=Q^\pi(o_t,a_t)-V^\pi(o_t).
+\label{eq:pg}
+\end{equation}
+The \textbf{advantage} $A$ measures how much better action $a_t$ was than
+what the policy does on average in that situation. This is the precise
+form of ``did things turn out better or worse than expected?''. Positive
+advantage: make that action more likely. Negative: less likely.
+
+\paragraph{Estimating the advantage: the TD error.} We do not know $Q^\pi$
+or $V^\pi$. We learn an approximation $V_\phi\approx V^\pi$ (the critic)
+by least-squares regression on observed returns. Then the one-step Bellman
+relation~\eqref{eq:bellman} gives a cheap advantage estimate, the
+\emph{temporal-difference (TD) error}
+\begin{equation}
+\delta_t=r_t+\gamma V_\phi(o_{t+1})-V_\phi(o_t).
+\label{eq:td}
+\end{equation}
+Read it as ``what actually happened today, plus what the critic now
+expects for the rest of the season, minus what the critic expected
+yesterday''. If $\delta_t>0$, the day went better than expected. Averaging
+it over many steps is how credit is assigned through time:
+Section~\ref{sec:ppo} shows how PPO blends several steps of $\delta$ into a
+better estimate.
+
+\subsection{Training versus testing}
+As in calibration and validation, an agent must be judged on data it was
+not trained on. Each season's random storms are generated from a
+\emph{seed} (a number that fixes the random sequence). Training uses one
+set of seeds. Testing uses 30 different seeds, the same 30 for every
+policy, so that all policies face identical storms and the comparison is
+fair.
+
+\subsection{What the agent sees in this report}
+\begin{center}
+\small
+\begin{tabular}{p{0.24\textwidth}p{0.68\textwidth}}
+\toprule
+RL concept & In the single-reservoir problem\\
+\midrule
+environment & OHQ reservoir model + storm and demand generator\\
+step & one day (one OHQ run of one day)\\
+episode & one 90-day season\\
+observation $o_t$ & storage, current inflow, 1--3-day inflow forecasts, demand, days left\\
+action $a_t$ & release for the day, from 0 to 6{,}000 m$^3$/d\\
+reward $r_t$ & minus the day's penalties (deficit, flooding, spill)\\
+return & minus the season's total penalty (closer to 0 is better)\\
+policy & neural network mapping $o_t$ to $a_t$\\
+\bottomrule
+\end{tabular}
+\end{center}

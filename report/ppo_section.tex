@@ -1,0 +1,158 @@
+%=====================================================================
+\section{The RL algorithm (PPO)}\label{sec:ppo}
+%=====================================================================
+
+We use \emph{Proximal Policy Optimization} (PPO) \cite{schulman2017ppo},
+one of the most widely used RL algorithms. It is an actor--critic method
+built directly on the policy gradient of Eq.~\eqref{eq:pg}. It is
+implemented from scratch in about 150 lines of PyTorch
+(\code{train\_ppo.py}), so every step below can be traced in the code.
+
+\subsection{The idea}
+PPO repeats one cycle:
+\begin{enumerate}\itemsep1pt
+\item \textbf{Collect experience.} Run the current policy (with its
+exploration noise) in the simulator for a while and record every
+$(o_t,a_t,r_t)$.
+\item \textbf{Score each decision.} Use the critic to estimate each
+action's advantage: was it better or worse than expected?
+\item \textbf{Improve the policy, carefully.} Change $\theta$ to make
+good actions more likely and bad ones less likely, \emph{but not by too
+much in one go}.
+\item \textbf{Improve the critic.} Fit $V_\phi$ to the returns just
+observed, so the next round's advantage estimates are better.
+\end{enumerate}
+The phrase ``not by too much'' is what distinguishes PPO. A policy-gradient
+step uses data collected with the \emph{old} policy, so it is only
+trustworthy for policies close to it. A large step can jump to a policy
+that behaves very differently, where the old data say nothing, and
+performance can collapse. Engineers will recognize the same concern behind
+step-size control in Newton's method or the damping term in
+Levenberg--Marquardt: trust the local model only within a limited region.
+
+\subsection{The networks}
+Two separate small networks are used. Each has two hidden layers of 64
+units with $\tanh$ activations.
+\begin{itemize}\itemsep1pt
+\item \textbf{Actor:} $o_t\mapsto\mu_\theta(o_t)$, the mean of the action.
+The action is drawn as $a_t\sim\mathcal N(\mu_\theta(o_t),\sigma^2)$. The
+spread $\sigma$ is one more learned parameter, initialized at
+$e^{-0.5}\approx0.6$ (on an action range of $[-1,1]$, so exploration starts
+wide). The environment clips the action to $[-1,1]$ and maps it to a
+release.
+\item \textbf{Critic:} $o_t\mapsto V_\phi(o_t)$, the predicted
+(discounted) return still to come.
+\end{itemize}
+For evaluation, the trained actor is used deterministically:
+$a_t=\mathrm{clip}(\mu_\theta(o_t))$.
+
+\subsection{Step 2 in detail: generalized advantage estimation}
+The TD error of Eq.~\eqref{eq:td} is a one-day look-ahead. It has low
+variance, but it is biased when the critic is wrong. The full remaining
+return is unbiased but noisy. \emph{Generalized advantage estimation} (GAE)
+\cite{schulman2016gae} blends all look-ahead lengths with a geometric
+weight $\lambda\in[0,1]$:
+\begin{equation}
+\hat A_t=\sum_{l\ge0}(\gamma\lambda)^l\,\delta_{t+l},\qquad
+\delta_t=r_t+\gamma V_\phi(o_{t+1})(1-d_t)-V_\phi(o_t),
+\label{eq:gae}
+\end{equation}
+where $d_t=1$ on the last day of a season (there is no ``tomorrow'' to
+bootstrap from). $\lambda=0$ gives the one-day TD error. $\lambda=1$ gives
+the full remaining return minus the critic's prediction. We use
+$\lambda=0.95$, so credit for a flood is spread back over roughly the
+previous $1/(1-\gamma\lambda)\approx17$ days. The sum is computed in one
+backward pass over the recorded data. The critic's regression target is
+$\hat R_t=\hat A_t+V_\phi(o_t)$. Before each update the advantages are
+standardized (zero mean, unit variance), which only rescales the step.
+
+\subsection{Step 3 in detail: the clipped objective}
+After the data are collected, the policy used to collect them is frozen as
+$\pi_{\theta_{old}}$. For a candidate $\theta$, the \emph{probability
+ratio}
+\[
+\rho_t(\theta)=\frac{\pi_\theta(a_t\mid o_t)}{\pi_{\theta_{old}}(a_t\mid o_t)}
+\]
+says how much more (or less) likely the new policy is to take the recorded
+action. The objective $\mathbb E[\rho_t\hat A_t]$ has the same gradient as
+Eq.~\eqref{eq:pg} at $\theta=\theta_{old}$, and it can be maximized with
+several gradient steps on the same data. Left alone, though, it would keep
+pushing $\rho_t$ for good actions towards infinity. PPO therefore
+maximizes the \emph{clipped} objective
+\begin{equation}
+L^{\mathrm{clip}}(\theta)=\mathbb E_t\Big[\min\big(\rho_t\hat A_t,\;\mathrm{clip}(\rho_t,\,1-\epsilon,\,1+\epsilon)\,\hat A_t\big)\Big],\qquad \epsilon=0.2 .
+\label{eq:clip}
+\end{equation}
+Two cases make it concrete. If $\hat A_t>0$ (a good action), the objective
+grows with $\rho_t$ until $\rho_t=1.2$ and is flat beyond, so there is no
+incentive to make that action more than 20\% more likely in one round. If
+$\hat A_t<0$ (a bad action), the objective improves as $\rho_t$ falls, but
+only until $\rho_t=0.8$. The $\min$ makes sure clipping can only remove
+incentives, never add them. The result is a cheap, approximate trust
+region.
+
+The quantity actually minimized by gradient descent combines the actor and
+critic losses:
+\begin{equation}
+L(\theta,\phi)=-L^{\mathrm{clip}}(\theta)+c_v\,\tfrac12\,\mathbb E_t\big[(V_\phi(o_t)-\hat R_t)^2\big],\qquad c_v=0.5 .
+\label{eq:ppo_loss}
+\end{equation}
+The first term improves the policy and the second fits the critic by least
+squares.
+
+\subsection{The full training loop}
+\begin{center}
+\fbox{\begin{minipage}{0.92\textwidth}
+\small
+\textbf{PPO as implemented in \code{train\_ppo.py}}
+\begin{enumerate}\itemsep1pt
+\item Initialize actor $\theta$, critic $\phi$, $\log\sigma=-0.5$. Start 16 simulators, each with its own random season.
+\item Repeat for 100 updates (single reservoir) or 245 updates (cascade):
+\begin{enumerate}\itemsep0pt
+\item \emph{Rollout:} each simulator runs 256 days with the current stochastic policy, so 4{,}096 $(o,a,r)$ records per update. A finished season immediately restarts with a new random season.
+\item \emph{Advantages:} compute $\delta_t$, $\hat A_t$ (Eq.~\ref{eq:gae}) and $\hat R_t$ for every record; standardize $\hat A_t$.
+\item \emph{Optimize:} 10 passes (epochs) over the 4{,}096 records in shuffled minibatches of 256; on each minibatch take one Adam gradient step on $L(\theta,\phi)$ (Eq.~\ref{eq:ppo_loss}), with gradient norm clipped at 0.5.
+\end{enumerate}
+\item Save $\theta$ (the trained policy).
+\end{enumerate}
+\end{minipage}}
+\end{center}
+
+\subsection{Hyperparameters and what they control}
+\begin{center}
+\small
+\begin{tabular}{lrp{0.55\textwidth}}
+\toprule
+setting & value & what it controls\\
+\midrule
+parallel simulators & 16 & throughput; one OHQ instance per CPU worker\\
+rollout length & 256 days & experience collected per simulator per update\\
+samples per update & 4{,}096 & size of the batch the policy learns from each round\\
+epochs per update & 10 & how many times each batch is reused\\
+minibatch size & 256 & records per gradient step\\
+learning rate (Adam) & $3\times10^{-4}$ & gradient step size\\
+discount $\gamma$ & 0.99 & how far ahead the agent looks (effective horizon $\sim1/(1-\gamma)=100$ days)\\
+GAE $\lambda$ & 0.95 & bias--variance trade-off of the advantage estimate\\
+clip $\epsilon$ & 0.2 & maximum change in action probabilities per round (trust region)\\
+value coefficient $c_v$ & 0.5 & weight of the critic's loss\\
+gradient-norm clip & 0.5 & guards against occasional huge gradients\\
+total steps & 409{,}600 / $\sim10^6$ & training budget, single reservoir / cascade\\
+\bottomrule
+\end{tabular}
+\end{center}
+These are standard PPO defaults. None were tuned for this problem.
+
+\paragraph{Parallel rollouts.} The 16 simulators run in separate processes
+(\path{gymnasium.vector.AsyncVectorEnv}). Each owns its own OHQ instance
+and working folder. When a season ends, Gymnasium restarts it one step
+later and returns one dummy record, which is masked out of the update.
+
+\paragraph{A performance pitfall.} The first parallel run made almost no
+progress. Every worker sat at $\approx370\%$ CPU because OHQ's solver
+defaults to \code{n\_threads = 8} (OpenMP), and BLAS/PyTorch add their own
+threads. Sixteen workers times eight threads oversubscribed the 32-core
+machine. Whenever OHQ models run in parallel, \code{n\_threads} must be 1.
+With \code{n\_threads = 1} in OHQ and \code{OMP\_NUM\_THREADS = 1} /
+\code{torch.set\_num\_threads(1)} in the workers, throughput rose to
+$\approx1{,}200$ environment steps per second.
+

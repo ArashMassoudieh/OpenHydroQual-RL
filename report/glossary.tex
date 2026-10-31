@@ -1,0 +1,39 @@
+\section*{Appendix: RL glossary}
+\addcontentsline{toc}{section}{Appendix: RL glossary}
+\begin{description}\itemsep2pt\small
+\item[Action ($a_t$)] What the agent decides at a step; here the release(s) for the day.
+\item[Actor] The network that represents the policy, $o\mapsto\mu_\theta(o)$.
+\item[Actor--critic] A method with both a policy network (actor) and a value network (critic). PPO is one.
+\item[Advantage ($A$, $\hat A_t$)] How much better an action turned out than the policy's average in that situation; positive means ``do this more''.
+\item[Agent] The decision maker; here the learned operating rule.
+\item[Baseline] (i) In this report: a comparison policy (demand only, rule curves). (ii) In RL theory: a function subtracted in the policy gradient to reduce noise; the critic plays this role.
+\item[Bellman equation] The recursion ``value now = expected reward now + discounted value next'' (Eq.~\ref{eq:bellman}); the backbone of both SDP and RL.
+\item[Clipping (PPO)] Limiting the change in action probabilities per update to $\pm\epsilon$ (20\%) so that learning is stable.
+\item[Credit assignment] Working out which earlier actions caused a later reward or penalty.
+\item[Critic] The value-function network $V_\phi(o)$ that predicts the return still to come.
+\item[Discount factor ($\gamma$)] Weight $<1$ applied per step to future rewards; sets the effective planning horizon $\sim1/(1-\gamma)$ steps.
+\item[Environment] Everything outside the agent: here the OHQ model plus the random storms and demand.
+\item[Episode] One run from start to end; here one 90-day season.
+\item[Epoch] One pass over the batch of collected data during an update.
+\item[Exploration] Trying actions other than the current best guess, here through random noise around the mean action, to discover better behavior.
+\item[GAE] Generalized advantage estimation: a weighted blend of multi-step TD errors (Eq.~\ref{eq:gae}).
+\item[Generalization] Performing well on situations (seasons) not seen in training; tested on held-out seeds.
+\item[Gymnasium] The standard Python interface for RL environments (\code{reset}, \code{step}).
+\item[Hyperparameter] A setting of the learning algorithm itself (learning rate, $\gamma$, \dots), as opposed to the learned weights.
+\item[Learning curve] Return versus amount of training experience.
+\item[MDP] Markov decision process: states, actions, transition law, rewards; the mathematical model of a sequential decision problem.
+\item[Minibatch] The subset of records used for one gradient step.
+\item[Neural network] A flexible parametric function built from layers of simple nonlinear units; its weights are fitted by gradient descent.
+\item[Observation ($o_t$)] The information the agent receives at a step; may be less than the full state.
+\item[On-policy] Learning only from data collected by the current policy (PPO is on-policy, so it discards data after each update).
+\item[Policy ($\pi$)] The decision rule mapping observations to actions; stochastic during training, deterministic in evaluation.
+\item[Policy gradient] The gradient of expected return with respect to the policy parameters (Eq.~\ref{eq:pg}); estimated from simulations without differentiating the simulator.
+\item[PPO] Proximal Policy Optimization: the policy-gradient actor--critic algorithm used here.
+\item[Return] Sum of (possibly discounted) rewards over an episode; the quantity to maximize.
+\item[Reward ($r_t$)] Scalar score of one step; its design defines the objective.
+\item[Rollout] A stretch of simulated experience collected with the current policy.
+\item[Seed] A number that fixes a random sequence; used to generate reproducible, distinct seasons.
+\item[State ($s_t$)] Everything that determines the future evolution of the system.
+\item[TD error ($\delta_t$)] One-step surprise: $r_t+\gamma V(o_{t+1})-V(o_t)$.
+\item[Value function ($V^\pi$)] Expected return still to come from a state when following policy $\pi$.
+\end{description}

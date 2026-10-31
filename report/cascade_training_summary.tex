@@ -1,0 +1,10 @@
+Training took about 28 minutes, about $10^6$ simulated days or 11{,}000
+seasons, each day a full OHQ run of the two-reservoir model.
+Figure~\ref{fig:cascade_learning} shows the return rising from about $-44$
+(an untrained, essentially random policy) to about $-11$ after 160{,}000
+steps, and to the $-4$ to $-9$ range after 500{,}000 steps. The curve stays
+jagged because it averages only the last 20 training seasons, and those
+seasons differ in storminess (and are run with exploration noise on). The
+exploration spread $\sigma$ falls steadily from 0.59 to 0.18. The agent
+becomes more confident but still explores, so more training might still
+help a little.
