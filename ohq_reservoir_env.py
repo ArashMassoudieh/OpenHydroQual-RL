@@ -91,7 +91,8 @@ class OHQBackend:
             "simulation_start_time": f"{t0}",
             "simulation_end_time": f"{t0 + 1}",
             "initial_time_step": f"{self.dt}",
-            # Keep the step from growing: a coarse last step overshoots t0+1.
+            # Keep the step at dt0 so the day is resolved finely (OHQLib builds before
+            # 3e178fc also overshot t0+1 by the last, grown step).
             "max_timestep_increase_factor": "1",
             # One tiny model per worker: solver threads only oversubscribe the CPU.
             "n_threads": "1",
