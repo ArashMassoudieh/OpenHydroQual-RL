@@ -1,0 +1,11 @@
+Training used 409{,}600 environment steps (100 PPO updates, about 4{,}500
+episodes), which took about 5 minutes with 16 workers at
+$\approx1{,}450$ steps/s. Each step is one complete OHQ model build and solve,
+so this is also about $4\times10^5$ OHQ runs.
+Figure~\ref{fig:learning} shows that the mean return rises from about $-52$
+(a near-random policy) to about $-20$ within the first $\sim$150k steps and
+then plateaus. The exploration standard deviation keeps shrinking
+($0.59\to0.15$). The remaining noise in the curve comes from the
+storm-to-storm variability of the episodes, not from the policy: a season
+with five large storms costs far more under \emph{any} policy than a dry
+one.

@@ -1,0 +1,562 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,decorations.pathmorphing}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\lstset{basicstyle=\ttfamily\small, columns=fullflexible, frame=single,
+        backgroundcolor=\color{gray!6}, keywordstyle=\color{blue!60!black}\bfseries,
+        commentstyle=\color{green!40!black}, showstringspaces=false, breaklines=true}
+
+\setlength{\emergencystretch}{3em}
+\newcommand{\Scap}{S_{\mathrm{cap}}}
+\newcommand{\Qsafe}{Q_{\mathrm{safe}}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Reinforcement Learning for Reservoir Operation\\
+       with OpenHydroQual as the Simulator}
+\author{OpenHydroQual-RL working notes}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We set up a closed-loop reinforcement learning (RL) problem in which a
+PyTorch agent operates a reservoir that is simulated by OpenHydroQual (OHQ)
+through its \code{openhydroqual\_py} Python bindings. The toy problem is a
+water-supply reservoir hit by random storms: each day the agent chooses a
+release that must balance meeting a downstream demand against downstream
+flooding and uncontrolled spill. We document every step: building the OHQ
+model from Python, verifying the simulator output against an analytical
+solution (which uncovered a one-step time-stamp lag in the current OHQLib
+build), wrapping it as a Gymnasium environment, training a Proximal Policy
+Optimization (PPO) agent, and comparing it with rule-based operating
+policies. We close with a performance analysis that motivates replacing the
+interpreted OHQ library with a codegen-compiled kernel.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=====================================================================
+\section{Overview}
+%=====================================================================
+
+Figure~\ref{fig:architecture} shows the software stack. The RL agent
+(PyTorch) talks to a Gymnasium environment through the standard
+\code{reset}/\code{step} API. The environment generates the hydrologic
+forcing, computes the reward and delegates the physics to a
+\emph{simulator backend}. The only backend implemented so far,
+\code{OHQBackend}, rebuilds and solves an OHQ model for each one-day
+control interval through \code{openhydroqual\_py}, a pybind11 module that
+links \code{libOHQLib}. The backend interface is deliberately narrow so
+that a codegen-compiled OHQ kernel can later replace it
+(Section~\ref{sec:performance}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth, font=\small,
+  box/.style={draw, rounded corners, align=center, minimum height=1.2cm, text width=3.1cm, fill=#1},
+  box/.default=white]
+  \node[box=blue!8]   (agent) at (0,0)     {PPO agent\\(PyTorch \code{ActorCritic})};
+  \node[box=green!8]  (env)   at (5,0)     {\code{OHQReservoirEnv}\\(Gymnasium)\\forcing, reward};
+  \node[box=orange!10](be)    at (10.8,0)    {\code{OHQBackend}\\\code{simulate\_day()}};
+  \node[box=gray!10]  (py)    at (10.8,-2.3) {\code{openhydroqual\_py}\\(pybind11)};
+  \node[box=gray!20]  (lib)   at (10.8,-4.3) {\code{libOHQLib}\\+ JSON templates};
+  \node[box=white, dashed] (cg) at (5,-3.3) {codegen kernel\\+ Python binding\\(future backend)};
+  \draw[->] ([yshift=3mm]agent.east) -- node[above, font=\scriptsize]{action $a_t$} ([yshift=3mm]env.west);
+  \draw[<-] ([yshift=-3mm]agent.east) -- node[below, font=\scriptsize]{$o_{t+1},\,r_t$} ([yshift=-3mm]env.west);
+  \draw[->] (env) -- node[above, font=\scriptsize]{$t_0,\,S_0,\,Q_t$} node[below, font=\scriptsize]{$S_1,V^{rel},V^{sp}$} (be);
+  \draw[->] (be) -- (py);
+  \draw[->] (py) -- (lib);
+  \draw[->, dashed] (env) -- node[right, font=\scriptsize, align=left]{same\\interface} (cg);
+  \node[draw, dotted, thick, fit=(agent)(env)(be), inner sep=7pt] (w) {};
+  \node[anchor=south west, font=\scriptsize] at (w.north west) {one per worker process ($\times16$, \code{AsyncVectorEnv}); the agent is shared};
+\end{tikzpicture}
+\caption{Software architecture. Each vectorized worker process owns one
+environment, one backend and its own OHQ working folder.}
+\label{fig:architecture}
+\end{figure}
+
+\paragraph{Files.}
+\begin{itemize}\itemsep0pt
+  \item \code{ohq\_reservoir\_env.py} -- \code{OHQBackend}, \code{OHQReservoirEnv}, rule-curve baseline.
+  \item \code{train\_ppo.py} -- PPO with GAE in plain PyTorch, parallel rollouts.
+  \item \code{evaluate.py} -- comparison against baselines, figures and table.
+  \item \code{diagnostics.py} -- simulator verification and timing figures.
+  \item \code{report/} -- this document.
+\end{itemize}
+
+%=====================================================================
+\section{Step 1: The toy problem}
+%=====================================================================
+
+\subsection{System}
+A single reservoir with spillway-crest storage $\Scap = 50{,}000$~m$^3$
+receives a low base flow plus random storm hydrographs
+(Figure~\ref{fig:schematic}). The operator controls the release $Q_t$
+through an outlet works with capacity $Q_{\max}=6{,}000$~m$^3$/d. The
+downstream channel floods when its flow exceeds
+$\Qsafe=3{,}000$~m$^3$/d. Water above $\Scap$ leaves over an uncontrolled
+emergency spillway. Downstream users need a demand $D(t)$ with a mean of
+$1{,}500$~m$^3$/d and a $\pm30\%$ seasonal swing, which exceeds the mean
+base flow ($\approx600$~m$^3$/d). Storage is therefore needed to bridge dry
+spells. Storms, on the other hand, can bring 10--35 thousand m$^3$ each.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth, font=\small]
+  % reservoir
+  \fill[blue!15] (0,0) rectangle (3.6,1.4);
+  \draw[thick] (0,2.7) -- (0,0) -- (3.6,0) -- (3.6,2.7);
+  \draw[dashed] (0,2.1) -- (3.6,2.1);
+  \node[font=\scriptsize, above] at (1.8,2.1) {crest $\Scap$};
+  \draw[blue!60, thick] (0,1.4) -- (3.6,1.4);
+  \node[font=\scriptsize, below] at (1.8,1.4) {$S(t)$};
+  \node at (1.8,0.45) {Reservoir};
+  % inflow
+  \draw[->, very thick, blue!70] (-2.6,0.9) -- node[above]{$Q_{in}(t)$} node[below, font=\scriptsize]{base + storms} (-0.1,0.9);
+  % structures
+  \draw[->, very thick, red!70] (3.7,2.3) -- node[above, font=\scriptsize]{spillway (if $S>\Scap$)} (7.0,2.3);
+  \draw[->, very thick, green!50!black] (3.7,0.3) -- node[below, font=\scriptsize]{outlet $Q_t$ (agent)} (7.0,0.3);
+  % river
+  \node[draw, thick, fill=blue!5, minimum height=3cm, text width=3cm, align=center, anchor=west, font=\small]
+    at (7.1,1.3) {\textbf{River}\\[2pt] flow $=Q_t+$ spill\\ floods if $>\Qsafe$\\[2pt] users need $D(t)$};
+\end{tikzpicture}
+\caption{The toy reservoir system.}
+\label{fig:schematic}
+\end{figure}
+
+\subsection{Stochastic forcing}
+For every episode (a 90-day season) the environment draws a new inflow
+series on a 0.05-day grid:
+\begin{align}
+Q_{in}(t) &= \beta\,q_b + \sum_{j} h_j(t), \qquad \beta\sim U(0.7,1.3),\; q_b = 600~\text{m}^3/\text{d},\\
+h_j(t) &= P_j\begin{cases} \tau/t_r & 0\le\tau<t_r\\ e^{-k_j(\tau-t_r)} & \tau\ge t_r\end{cases},\quad \tau=t-t_j,
+\end{align}
+with storm onsets $t_j$ arriving with probability $0.06$ per day, peaks
+$P_j\sim U(5000,15000)$~m$^3$/d, rise time $t_r=0.5$~d and recession
+constants $k_j\sim U(0.3,0.7)$~d$^{-1}$. The demand is
+$D(t)=\bar D\,[1+0.3\sin(2\pi t/90+\phi)]$ with a random phase $\phi$. The
+agent also receives a noisy forecast of the daily-mean inflow for the next
+1, 2 and 3 days, with multiplicative log-normal errors that grow with lead
+time ($\sigma=0.2\sqrt{\text{lead}}$). Figure~\ref{fig:forcing} shows
+three realizations.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/forcing_examples.pdf}
+\caption{Three random forcing realizations (inflow, demand and the safe
+channel capacity).}
+\label{fig:forcing}
+\end{figure}
+
+\subsection{MDP formulation}
+\begin{description}\itemsep2pt
+\item[Decision step:] one day; episode length 90 steps. The initial storage is drawn from $U(0.3,0.8)\,\Scap$.
+\item[Observation] ($7$-dim, normalized):
+\[o_t=\big(S_t/\Scap,\; Q_{in}(t)/\Qsafe,\; \hat F_{t+1}/\Qsafe,\; \hat F_{t+2}/\Qsafe,\; \hat F_{t+3}/\Qsafe,\; D_t/\Qsafe,\; 1-t/90\big),\]
+where $\hat F_{t+k}$ is the $k$-day-ahead forecast of the daily-mean inflow.
+\item[Action:] $a_t\in[-1,1]$, mapped to the target release $Q_t=\tfrac12(a_t+1)\,Q_{\max}$.
+\item[Transition:] one-day OHQ simulation (Section~\ref{sec:ohqmodel}).
+\item[Reward:] with $V^{rel}_t$ and $V^{sp}_t$ the released and spilled volumes over the day,
+\begin{equation}
+r_t = -\Big(\frac{\max(0,D_t-V^{rel}_t)}{D_t}\Big)^2
+      - w_f\,\frac{\max(0,V^{rel}_t+V^{sp}_t-\Qsafe)}{\Qsafe}
+      - w_s\,\frac{V^{sp}_t}{\Qsafe},
+\end{equation}
+with $w_f=2$ and $w_s=1$. At the end of the season a terminal penalty
+$-w_T\max(0,\,0.5\Scap-S_{90})/\Scap$ ($w_T=5$) discourages emptying the
+reservoir to avoid all flood risk.
+\end{description}
+The trade-off is the classic one: a full reservoir secures supply but leaves
+no room to absorb storms, while an empty one does the opposite. The release
+needed to make room is itself limited by $\Qsafe$, so the agent must
+pre-release \emph{before} a forecast storm arrives.
+
+%=====================================================================
+\section{Step 2: Building the OHQ model from Python}\label{sec:ohqmodel}
+%=====================================================================
+
+\subsection{Python bindings}
+The bindings (\path{OpenHydroQual/PythonBindings/bindings.cpp}) expose
+\code{System} with methods for loading templates, setting system values,
+creating blocks and links, \code{finalize}, \code{solve} and
+\code{write\_outputs}. There is no in-memory accessor for output time
+series, so results are read back from the output file. Each worker
+therefore uses its own working folder.
+
+\subsection{Components}
+The model uses existing OHQ templates:
+\begin{center}
+\small
+\begin{tabular}{llp{5.2cm}}
+\toprule
+OHQ object & type (template) & role \\
+\midrule
+\code{Reservoir} & \code{Reservoir} & storage $S$, inflow time series (\code{Reservoir\_operation.json}) \\
+\code{River} & \code{fixed\_head} & sink; its storage counts the released volume (\code{main\_components.json}) \\
+\code{SpillSink} & \code{fixed\_head} & sink; its storage counts the spilled volume \\
+\code{outlet} & \code{Reservoir\_link\_rule} & controlled release \\
+\code{spillway} & \code{Reservoir\_link\_rule} & emergency overflow \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{Reservoir\_link\_rule} computes its flow from a piecewise-linear rule
+in storage:
+\begin{equation}
+Q(S) = \begin{cases} Q_{\min} & S < S_{\min}\\
+Q_{\min} + \frac{S-S_{\min}}{S_{\max}-S_{\min}}(Q_{\max}-Q_{\min}) & S_{\min}\le S\le S_{\max}\\
+Q_{\max} & S > S_{\max}\end{cases}
+\end{equation}
+We use the same link type for both structures:
+\begin{itemize}
+\item \textbf{outlet:} $Q_{\min}=0$, $Q_{\max}=Q_t$ (the agent's action),
+$S_{\min}=0$, $S_{\max}=S_{dead}=200$~m$^3$. The outlet releases exactly
+$Q_t$ unless the reservoir is nearly empty, where the release tapers to
+zero, so storage can never become negative.
+\item \textbf{spillway:} $Q_{\min}=0$, $S_{\min}=\Scap$,
+$S_{\max}=1.05\Scap$, $Q_{\max}=50{,}000$~m$^3$/d, which acts as an overflow
+weir. An earlier, steeper ramp ($1.02\Scap$, $2\times10^5$~m$^3$/d) made
+the Newton solver fail to converge when the spill switched off, so the
+ramp was softened.
+\end{itemize}
+
+\subsection{One control interval}
+Because the bindings do not expose a way to change a block's state on a
+live \code{System}, the backend rebuilds the model for every decision step,
+using the current storage as the initial condition. The inflow file holds
+the whole season in absolute time, and each step simulates
+$[t_0,t_0+1]$:
+
+\begin{lstlisting}[language=Python]
+s = ohq.System(); s.set_default_template_path(R); s.set_working_folder(W)
+s.load_template(R + "main_components.json")
+s.add_template(R + "Reservoir_operation.json")
+for k, v in {"simulation_start_time": t0, "simulation_end_time": t0 + 1,
+             "initial_time_step": 0.05, "max_timestep_increase_factor": 1,
+             "n_threads": 1, "alloutputfile": W + "output.txt"}.items():
+    s.set_system_value(k, str(v))
+s.create_block("Reservoir", "Reservoir", {"Storage": S0, "inflow": inflow_file})
+s.create_block("River", "fixed_head", {"head": "0", "Storage": "0"})
+s.create_block("SpillSink", "fixed_head", {"head": "0", "Storage": "0"})
+s.create_link("outlet", "Reservoir_link_rule", "Reservoir", "River",
+              {"Q_min": 0, "Q_max": Q, "S_min": 0, "S_max": S_dead})
+s.create_link("spillway", "Reservoir_link_rule", "Reservoir", "SpillSink",
+              {"Q_min": 0, "Q_max": 5e4, "S_min": S_cap, "S_max": 1.05 * S_cap})
+s.finalize(); s.solve(True, False); s.write_outputs()
+# read S(t0+1), River storage (= released volume), SpillSink storage (= spill)
+\end{lstlisting}
+(Numbers are converted to strings in the actual code.) Two practical notes:
+\code{set\_system\_value} returned \code{False} even when the setting was
+applied (fixed in OHQ, see the last section), and the \code{Reservoir\_link\_rule} template stores its
+\code{"unit"} entry inside the \code{rule} dictionary, so OHQ prints
+harmless \emph{``property `ft' does not exist''} messages.
+
+%=====================================================================
+\section{Step 3: Verifying the simulator output}
+%=====================================================================
+
+Before using OHQ inside an RL loop we checked it against a case with an
+analytical solution: constant inflow $1000$~m$^3$/d, release
+$150$~m$^3$/d and $S_0=1000$~m$^3$, so that $S(t)=1000+850\,t$.
+
+\subsection{Finding: one-step time-stamp lag}
+The first test runs disagreed with the analytical solution, and the error
+grew with the time step. Reading \code{System::Solve} showed two causes:
+\begin{enumerate}
+\item The time loop runs \code{while (t < tend + dt)}, so the last step
+overshoots $t_{end}$. With the default adaptive step (allowed to grow to
+$50\times$ the initial step), this overshoot can be large.
+\item The current OHQ source stamps each output row with the time at the
+\emph{end} of the step (\code{PopulateOutputs(true, t + dt)}), and a code
+comment notes this was changed. The compiled \code{libOHQLib.so} the
+bindings link against predates the change and stamps the row with the
+\emph{start} time of the step. Each row therefore holds the state one step
+later than its label says.
+\end{enumerate}
+
+Figure~\ref{fig:stamping} shows the storage error relative to the
+analytical solution. With the step held fixed, reassigning each row the
+next row's stamp makes the error exactly zero. With the default growing
+step, the error stays offset even after this correction. The environment
+therefore (i) fixes the step (\code{max\_timestep\_increase\_factor = 1}),
+(ii) reassigns each row the next row's stamp and interpolates at
+$t_0+1$, and (iii) detects automatically at start-up which convention the
+linked library uses, by running this analytical test. The environment
+keeps working if OHQLib is rebuilt with the corrected stamping.
+
+\paragraph{Update (rebuilt library).} After rebuilding \code{libOHQLib}
+(v2.1.1) and the bindings from the current source, the self-check selects
+the end-of-step convention. The output now matches the analytical solution
+exactly with both the fixed and the default growing step, and the first
+row holds the true initial state. The overshoot past $t_{end}$ remains by
+design: with the growing step, the 1-day run above ended at $t=1.8$, so up
+to 80\% extra time was simulated. The environment therefore keeps the
+step fixed. Training results are unaffected, since the physics is
+identical (same episode return, to 4 decimals). Per-step cost dropped from
+about 5.1 to 4.0~ms.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/stamping_check.pdf}
+\caption{Error of the OHQ storage relative to the analytical solution for
+a one-day run (initial step 0.05~d). Left: default adaptive step. Right:
+fixed step, as used in the environment. Assigning each row the next row's
+stamp removes the error (after the very first row).}
+\label{fig:stamping}
+\end{figure}
+
+\subsection{Episode mass balance}
+Over a full episode, run with the rule-curve policy, we compare the daily
+change in storage with the exact inflow volume (trapezoidal integral of
+the forcing) minus the released and spilled volumes
+(Figure~\ref{fig:massbalance}). The residual follows a characteristic
+$+/-$ pattern on storm days: positive on the rising limb, then negative and
+decaying. This is consistent with OHQ evaluating the piecewise-linear
+inflow series slightly offset within the implicit step, and it is a
+property of the time discretization, not of the bookkeeping. The residual
+integrates to nearly zero: \input{mass_balance_summary.tex}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/mass_balance.pdf}
+\caption{Daily mass-balance residual
+$S_t+V^{in}_t-V^{rel}_t-V^{sp}_t-S_{t+1}$ as a percentage of the day's
+inflow volume.}
+\label{fig:massbalance}
+\end{figure}
+
+%=====================================================================
+\section{Step 4: The RL algorithm (PPO)}
+%=====================================================================
+
+We use Proximal Policy Optimization \cite{schulman2017ppo} with
+generalized advantage estimation (GAE) \cite{schulman2016gae},
+implemented directly in PyTorch (\code{train\_ppo.py}).
+
+\paragraph{Networks.} Separate actor and critic MLPs ($7\to64\to64$,
+$\tanh$ activations). The policy is Gaussian,
+$\pi_\theta(a\mid o)=\mathcal N(\mu_\theta(o),\sigma^2)$, with a learned,
+state-independent $\log\sigma$ (initialized at $-0.5$). Sampled actions are
+clipped to $[-1,1]$ by the environment. At evaluation time the
+deterministic action $\mathrm{clip}(\mu_\theta(o))$ is used.
+
+\paragraph{Objective.} With probability ratio
+$\rho_t=\pi_\theta(a_t|o_t)/\pi_{\theta_{old}}(a_t|o_t)$ and normalized advantages $\hat A_t$,
+\begin{equation}
+L(\theta)= -\,\mathbb E_t\big[\min(\rho_t\hat A_t,\;\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)\hat A_t)\big]
+          + c_v\,\mathbb E_t\big[(V_\phi(o_t)-\hat R_t)^2\big]/2 ,
+\end{equation}
+\begin{equation}
+\hat A_t=\sum_{l\ge0}(\gamma\lambda)^l\delta_{t+l},\qquad
+\delta_t=r_t+\gamma V_\phi(o_{t+1})(1-d_t)-V_\phi(o_t).
+\end{equation}
+
+\paragraph{Hyperparameters.}
+\begin{center}
+\begin{tabular}{lr@{\hspace{2em}}lr}
+\toprule
+parallel environments & 16 & discount $\gamma$ & 0.99 \\
+rollout length per env & 256 & GAE $\lambda$ & 0.95 \\
+samples per update & 4096 & clip $\epsilon$ & 0.2 \\
+epochs per update & 10 & value coefficient $c_v$ & 0.5 \\
+minibatch size & 256 & learning rate (Adam) & $3\times10^{-4}$ \\
+total environment steps & 409{,}600 & gradient-norm clip & 0.5 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Parallel rollouts.} Rollouts run in 16 worker processes
+(\code{gymnasium.vector.AsyncVectorEnv}, \code{spawn} context), each with
+its own OHQ instance. Gymnasium's ``next-step'' autoreset produces one
+dummy transition after every episode end. These are masked out of the
+update.
+
+\paragraph{A performance pitfall.} The first parallel run made almost no
+progress. Every worker sat at $\approx370\%$ CPU because OHQ's solver
+defaults to \code{n\_threads = 8} (OpenMP), and BLAS/PyTorch add their own
+threads. Sixteen workers times eight threads oversubscribed the 32-core
+machine. Setting \code{n\_threads = 1} in OHQ and
+\code{OMP\_NUM\_THREADS = 1} / \code{torch.set\_num\_threads(1)} in the
+workers raised throughput to $\approx1{,}200$ environment steps per second.
+
+%=====================================================================
+\section{Step 5: Results}
+%=====================================================================
+
+\subsection{Training}
+\input{training_summary.tex}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/learning_curve.pdf}
+\caption{Left: mean return of the last 20 completed training episodes.
+Right: the policy's exploration standard deviation.}
+\label{fig:learning}
+\end{figure}
+
+\subsection{Comparison with baselines}
+We evaluate three policies on the same 30 held-out storm sequences
+(seeds $10{,}000$--$10{,}029$, never seen in training):
+\begin{description}\itemsep2pt
+\item[Demand only:] release $Q_t=D_t$.
+\item[Rule curve (0.8):] a standard operating policy with a flood rule:
+release $D_t$, and above $\theta\Scap$ release
+$\min(\Qsafe,\,D_t+(S_t-\theta\Scap))$, with $\theta=0.8$.
+\item[Tuned rule:] the same rule with $\theta$ tuned by grid search on
+separate seeds (see below).
+\item[PPO:] the trained agent (deterministic).
+\end{description}
+
+\begin{table}[h]
+\centering
+\small
+\input{results_table.tex}
+\caption{Mean over 30 test episodes. The return is split into its supply,
+flood, spill and terminal components (all penalties, so higher is better).
+\emph{Deficit} is the fraction of total demand not delivered. \emph{Flood
+days} counts days with river flow above $\Qsafe$.}
+\label{tab:results}
+\end{table}
+
+\input{results_discussion.tex}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{figures/return_boxplot.pdf}
+\caption{Distribution of test-episode returns.}
+\label{fig:box}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/trajectory_best_gain.pdf}
+\caption{Test episode with the largest PPO gain over the rule curve (0.8). From
+top: inflow, storage, release (dotted: demand; dashed: $\Qsafe$), spill.}
+\label{fig:traj_best}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/trajectory_median.pdf}
+\caption{A test episode with the median PPO-vs-rule-curve (0.8) difference.}
+\label{fig:traj_med}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.6\textwidth]{figures/policy_map.pdf}
+\caption{Learned release as a function of storage and the inflow forecast.
+The current inflow and the 1- and 2-day forecasts are set to the value on the
+vertical axis, the 3-day forecast to $0.6\times$ that value, with mean
+demand at mid-season.}
+\label{fig:policymap}
+\end{figure}
+
+%=====================================================================
+\section{Step 6: Performance and the case for a codegen backend}\label{sec:performance}
+%=====================================================================
+
+RL needs a very large number of short simulations; this run alone used
+about $4\times10^5$ one-day OHQ solves. Figure~\ref{fig:timing} breaks
+down the cost of one step.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/timing_breakdown.pdf}
+\caption{Wall time per environment step for the interpreted OHQ backend
+(mean of 50 steps, single thread).}
+\label{fig:timing}
+\end{figure}
+
+\input{timing_summary.tex}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth, font=\small,
+  box/.style={draw, rounded corners, align=center, minimum height=0.9cm, fill=#1}, box/.default=white]
+  \node[box=gray!10, minimum width=3.4cm] (a) {model JSON / \code{.ohq}};
+  \node[box=orange!10, right=1.2cm of a, minimum width=3.4cm] (b) {OHQ codegen\\(\code{OpenHydroQual/codegen})};
+  \node[box=orange!20, right=1.2cm of b, minimum width=3.4cm] (c) {compiled kernel\\+ pybind11 module};
+  \node[box=green!8, below=1.0cm of c, minimum width=3.4cm] (d) {\code{CodegenBackend}\\\code{simulate\_day()}};
+  \node[box=green!8, left=1.2cm of d, minimum width=3.4cm] (e) {\code{OHQReservoirEnv}\\(unchanged)};
+  \draw[->] (a) -- (b); \draw[->] (b) -- (c); \draw[->] (c) -- (d); \draw[->] (d) -- (e);
+\end{tikzpicture}
+\caption{Planned replacement of the interpreted backend.}
+\end{figure}
+
+\paragraph{Backend contract.} Any replacement only needs to implement
+\begin{lstlisting}[language=Python]
+class Backend:
+    def set_inflow(self, t, q): ...          # forcing for the whole episode
+    def simulate_day(self, t0, S0, Q):       # one control interval
+        return S1, released_volume, spilled_volume
+    def close(self): ...
+\end{lstlisting}
+and is passed to the environment as \code{OHQReservoirEnv(backend=...)}.
+A compiled kernel that keeps its state in memory between calls would also
+remove the per-step file round trip and the template parsing, and would
+allow batched, vectorized rollouts within a single process.
+
+%=====================================================================
+\section{Limitations and next steps}
+%=====================================================================
+\begin{itemize}
+\item \textbf{Make the problem harder than one rule can handle.} Candidates
+are a cascade of reservoirs, a water-quality objective (OHQ's constituent
+transport), hydropower with time-varying prices, or a longer,
+skill-varying forecast. These are the settings where RL should pull ahead
+of tuned rules.
+\item \textbf{Simulator speed.} Replace \code{OHQBackend} with a
+codegen-compiled kernel (Section~\ref{sec:performance}). Even within the
+current bindings, a method to reset a block's state on a persistent
+\code{System} and an in-memory output accessor would remove most of the
+per-step overhead.
+\item \textbf{OHQ fixes uncovered here.} (i) \emph{Done:} rebuilt
+\code{libOHQLib} so the bindings use the end-of-step output stamping.
+(ii) \emph{Open:} move the \code{"unit"} entry out of the \code{rule}
+dictionary of \code{Reservoir\_link\_rule} in \code{main\_components.json}.
+(iii) \emph{Done:} \code{SetSystemSettingsObjectProperties} returned
+\code{false} whenever \code{settings.json} had not been loaded, even though
+the value had been applied. It now returns \code{SetProperty}'s result
+(branch \code{fix/set-system-value-return}), and the environment raises an
+error if OHQ rejects a setting.
+\item \textbf{RL details.} Training used a single seed and a fixed budget.
+Multiple seeds, observation and reward normalization, and a tanh-squashed
+policy would make the agent more robust. Daily-average flood accounting
+also underweights sub-daily peaks; the reward could use the peak river flow
+instead.
+\end{itemize}
+
+%=====================================================================
+\section{How to reproduce}
+%=====================================================================
+\begin{lstlisting}[language=bash]
+source ~/Projects/ohq_rl_env/bin/activate
+cd ~/Projects/OpenHydroQual-RL
+python diagnostics.py                       # verification + timing figures
+python train_ppo.py --total-steps 409600 --num-envs 16 --out results/ppo_reservoir.pt
+python evaluate.py --policy results/ppo_reservoir.pt --episodes 30
+cd report && latexmk -pdf main.tex
+\end{lstlisting}
+The paths of the bindings and templates can be overridden with the
+\code{OHQ\_PY\_PATH} and \code{OHQ\_RESOURCES} environment variables.
+
+\begin{thebibliography}{9}
+\bibitem{schulman2017ppo} J.~Schulman, F.~Wolski, P.~Dhariwal, A.~Radford, O.~Klimov.
+  Proximal Policy Optimization Algorithms. arXiv:1707.06347, 2017.
+\bibitem{schulman2016gae} J.~Schulman, P.~Moritz, S.~Levine, M.~Jordan, P.~Abbeel.
+  High-Dimensional Continuous Control Using Generalized Advantage Estimation. ICLR, 2016.
+\end{thebibliography}
+
+\end{document}
