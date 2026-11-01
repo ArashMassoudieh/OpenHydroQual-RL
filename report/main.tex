@@ -147,6 +147,26 @@ $V^{tr}_t$ & tributary volume during day $t$ & m$^3$\\
 $V^{riv}_t$ & river volume at the flood point, $V^{rel,B}_t+V^{sp,B}_t+V^{tr}_t$ & m$^3$\\
 $Q^{sup}_t$ & part of the demand the tributary does not supply (rule) & m$^3$/d\\
 $\eta_A,\,\eta_B$ & thresholds of the cascade rule (fractions of $S^A_{cap}$, $S^B_{cap}$) & --\\[3pt]
+\multicolumn{3}{@{}l}{\emph{Stormwater pond (Section~\ref{sec:pond})}}\\
+$h$ & pond depth & m\\
+$\alpha,\beta$ & pond storage--depth parameters, $S\approx\alpha h^\beta$ & 250; 2\\
+$u_t$ & valve opening chosen by the policy for hour $t$ & 0--1\\
+$C_d,\,A_{max}$ & valve discharge coefficient; orifice area at full opening & 0.6; 0.03 m$^2$\\
+$\varepsilon$ & regularization head of the valve law & 1 mm\\
+$Q(t),\,Q_n$ & pond outflow (valve + overflow); at solver step $n$ & m$^3$/d\\
+$\delta t$ & OHQ solver step (5 minutes) & d\\
+$Q_p$ & outflow exceeded a fraction $p$ of the time & m$^3$/d\\
+$p$ & exceedance probability & 0.001\\
+$\lambda$ & decay rate of the Laplace age tracer & 1 d$^{-1}$\\
+$\tau,\,p(\tau)$ & water age and its probability density & d\\
+$C$ & age-tracer concentration, $\mathcal L\{p\}(\lambda)=E[e^{-\lambda\tau}]$ & --\\
+$F_y$ & young-water fraction of the outflow (flow-weighted $C$) & --\\
+$J$ & pond evaluation objective, $Q_p/Q_p^{\,passive}+F_y/F_y^{\,passive}$ (lower is better; passive pond = 2) & --\\
+$Q_p^{\,passive},F_y^{\,passive}$ & $Q_p$ and $F_y$ of the passive pond (valve fully open) under the same rain & --\\
+$a_t$ (pond) & network action; valve opening $u_t=((a_t+1)/2)^2$ & --\\
+$Q_{ref},\,V_{ref}$ & reference flow and volume of the pond reward & 1{,}000 m$^3$/d; 1{,}000 m$^3$\\
+$w_q,\,w_y$ & weights of the peak-flow surrogate and the young-water terms & 1; 5\\
+$u_{hold},u_{pre}$ & openings of the forecast rule (holding; pre-release) & --\\[3pt]
 \multicolumn{3}{@{}l}{\emph{Other}}\\
 $U(a,b)$ & uniform distribution on $[a,b]$ & --\\
 $\mathcal N(\mu,\sigma^2)$ & normal distribution & --\\
@@ -636,6 +656,8 @@ remove the per-step file round trip and the template parsing, and would
 allow batched, vectorized rollouts within a single process.
 
 \input{cascade_section.tex}
+
+\input{pond_section.tex}
 
 %=====================================================================
 \section{Limitations and next steps}

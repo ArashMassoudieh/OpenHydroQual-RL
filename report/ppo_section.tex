@@ -100,6 +100,96 @@ L(\theta,\phi)=-L^{\mathrm{clip}}(\theta)+c_v\,\tfrac12\,\mathbb E_t\big[(V_\phi
 The first term improves the policy and the second fits the critic by least
 squares.
 
+\subsection{What the two networks learn from}\label{sec:ppo_data}
+Readers who know supervised learning usually ask: what are the inputs, and
+what are the labels? For PPO the answer differs for the two networks.
+
+\paragraph{Inputs.} Both networks receive \emph{exactly the same input}:
+the observation $o_t$ that the environment returns (for the pond, the 9
+numbers of Section~\ref{sec:pond}: pond depth, pond tracer concentration,
+current inflow, five rain forecasts, and the fraction of the episode left).
+Neither network sees the action as an input, nor anything the agent cannot
+observe (for the pond, e.g.\ the catch-basin state or the true future
+rain). Because the critic is used only during training, it could in
+principle be given extra, ``privileged'' information to sharpen its
+predictions. That is a known technique, but it is not used here.
+
+\paragraph{The critic: a regression with self-made labels.} The critic
+$V_\phi(o_t)$ outputs one number, the expected discounted reward still to
+come. Its label is the return estimate built from the rollout,
+\[
+\hat R_t=\hat A_t+V_{\phi_{old}}(o_t)\;\approx\; r_t+\gamma r_{t+1}+\gamma^2 r_{t+2}+\dots,
+\]
+with $\hat A_t$ from Eq.~\eqref{eq:gae}. In words, the label sums the
+rewards that actually followed. Further ahead, the sum is cut off and the
+remainder is filled in with the critic's own prediction from when the data
+were collected (``bootstrapping''). GAE blends the cut-off over all horizons
+with weight $\lambda=0.95$, so in effect about $1/(1-\gamma\lambda)\approx17$
+steps of actual rewards are used before the critic's own estimate takes
+over. At the end of an episode the future is zero. The critic is then
+fitted by least squares, $\tfrac12(V_\phi(o_t)-\hat R_t)^2$, weighted by
+$c_v=0.5$ in the loss. When reward normalization is on (the pond), the
+rewards in these labels are the normalized, clipped ones.
+
+\paragraph{The actor: no target action, a weighted push instead.} There is
+no ``correct'' valve setting to learn from, so the actor has no labels in
+the supervised sense. Each training sample instead carries three numbers
+saved during the rollout: the action actually taken, $a_t$ (the mean plus
+exploration noise); its log-probability under the policy that collected the
+data, $\log\pi_{\theta_{old}}(a_t\mid o_t)$; and its advantage $\hat A_t$.
+The actor minimizes $-L^{\mathrm{clip}}$ of Eq.~\eqref{eq:clip}. In effect:
+if $\hat A_t>0$, the action turned out better than the critic expected, and
+the actor's mean moves toward $a_t$. If $\hat A_t<0$, it moves away. The
+change per round is capped at about $\pm20\%$ in action probability. The
+exploration spread $\sigma$ is a separate learned parameter, not a network
+output, and is adjusted by the same loss.
+
+\paragraph{Where the data live.} All of this is held in memory for one
+update only (\code{train\_ppo.py}):
+\begin{center}
+\small
+\begin{tabular}{llll}
+\toprule
+quantity & array & shape & used by\\
+\midrule
+observations $o_t$ & \code{obs\_buf} & $(T{=}256,\,N{=}16,\,\text{obs dim})$ & actor and critic (input)\\
+actions $a_t$ & \code{act\_buf} & $(256,16,\text{action dim})$ & actor\\
+$\log\pi_{\theta_{old}}(a_t\mid o_t)$ & \code{logp\_buf} & $(256,16)$ & actor (ratio $\rho_t$)\\
+$V_{\phi_{old}}(o_t)$ & \code{val\_buf} & $(256,16)$ & GAE, critic label\\
+rewards $r_t$ & \code{rew\_buf} & $(256,16)$ & GAE\\
+episode-end flags $d_t$ & \code{done\_buf} & $(256,16)$ & GAE\\
+advantages $\hat A_t$ & \code{adv} & $(256,16)$ & actor (weight)\\
+critic labels $\hat R_t$ & \code{ret} & $(256,16)$ & critic (target)\\
+\bottomrule
+\end{tabular}
+\end{center}
+Each update, the 16 workers return 256 steps each. The main process
+computes $\hat A_t$ and $\hat R_t$ in one backward pass, flattens the
+arrays into 4{,}096 samples, trains for 10 passes in minibatches of 256,
+and then overwrites everything with the next rollout. Only the final
+network weights are saved to disk (\code{results/ppo\_*.pt}).
+
+\paragraph{What about the poor early critic?} At the start the critic's
+predictions are poor, so the early labels $\hat R_t$ (partly built from
+those predictions) are biased, and the early advantages are noisy. This
+does not linger: PPO is \emph{on-policy}, so each batch of data is used for
+one round of training and then discarded. Nothing collected with the early
+policy and critic is reused later. Each new batch is collected with the
+improved actor and labelled with the improved critic, so the bias shrinks
+as training proceeds. The $\lambda=0.95$ weighting, which leans mostly on
+actual rewards, and the clipped policy update limit the damage meanwhile.
+(This is unlike ``off-policy'' methods such as DQN or SAC, which keep a
+large replay memory of old experience.)
+
+\paragraph{The exception: behavior cloning.} In the warm start used for
+the pond (Section~\ref{sec:ppo}, last subsection), both networks do have
+ordinary supervised targets. The inputs are the observations from runs of
+the tuned rule. The actor's target is the rule's action (mean squared
+error on the actor's mean output). The critic's target is the plain
+discounted sum of the rewards the rule actually earned, with no
+bootstrapping. This is done once, before PPO starts, and it means the critic
+begins with sensible predictions instead of random ones.
+
 \subsection{The full training loop}
 \begin{center}
 \fbox{\begin{minipage}{0.92\textwidth}
@@ -142,10 +232,16 @@ total steps & 409{,}600 / $\sim10^6$ & training budget, single reservoir / casca
 \end{center}
 These are standard PPO defaults. None were tuned for this problem.
 
-\paragraph{Parallel rollouts.} The 16 simulators run in separate processes
-(\path{gymnasium.vector.AsyncVectorEnv}). Each owns its own OHQ instance
-and working folder. When a season ends, Gymnasium restarts it one step
-later and returns one dummy record, which is masked out of the update.
+\paragraph{Parallel rollouts.} The 16 simulators run in separate worker
+processes. Each owns its own OHQ instance and working folder. At every
+update the main process sends the current network weights to all workers.
+Each worker then collects its 256 steps independently and returns them;
+when a season ends it starts a new one immediately. Earlier versions used
+Gymnasium's vectorized environment, which advances all simulators in
+lockstep. That was fine while every step took the same few milliseconds,
+but in the stormwater problem rare slow steps (about one hour in 150 takes
+about a second) made every step wait for the slowest simulator, cutting
+throughput by an order of magnitude.
 
 \paragraph{A performance pitfall.} The first parallel run made almost no
 progress. Every worker sat at $\approx370\%$ CPU because OHQ's solver
@@ -156,3 +252,26 @@ With \code{n\_threads = 1} in OHQ and \code{OMP\_NUM\_THREADS = 1} /
 \code{torch.set\_num\_threads(1)} in the workers, throughput rose to
 $\approx1{,}200$ environment steps per second.
 
+
+\subsection{Two optional additions used for the stormwater pond}
+\paragraph{Reward normalization.} When most steps cost almost nothing and a
+few cost thousands of times more (an hour of pond overflow), the critic's
+least-squares fit is dominated by the rare spikes and the advantage
+estimates become noisy. With \code{--normalize-rewards}, every reward is
+divided by a running estimate of the standard deviation of the discounted
+return and clipped to $[-10,10]$. Rescaling all rewards by a constant does
+not change which policy is best. Clipping does slightly change the
+objective by capping the influence of the most extreme hours, a deliberate
+trade of exactness for stable learning.
+
+\paragraph{Starting from a rule: behavior cloning.} PPO normally starts from
+a random policy and must discover everything by trial and error. With
+\code{--bc-rule}, each worker first runs a given rule-based policy (here
+the tuned forecast rule) for a few thousand steps. The actor is then fitted
+by ordinary least squares to reproduce the rule's actions, and the critic
+to the returns the rule achieved. PPO then starts from a policy that
+already behaves like the rule, with a narrower exploration spread
+($\sigma=0.3$), and can only improve on it if the data support doing so.
+This is a common and practical way to combine engineering knowledge with
+RL. The rule encodes what operators already know, and RL looks for
+improvements around it.

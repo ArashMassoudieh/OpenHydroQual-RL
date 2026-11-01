@@ -1,0 +1,50 @@
+\paragraph{Headline.} Over the full three-year test windows, the tuned
+forecast rule is the best policy ($J=0.375$ and 0.365, i.e.\ about 82\%
+better than the passive pond). Next come the 2\% fixed opening (0.498,
+0.450) and PPO (0.588, 0.483). Year by year, PPO and the rule are
+statistically tied ($\Delta J=-0.08\pm0.22$, PPO better in 2 of 6 years).
+The three-year metric, the St.~Francis definition, favors the rule because
+PPO's overflows cluster in a few years and raise the three-year $Q_p$.
+The warm start made a large difference: from scratch, PPO scored
+$J\approx1.1$--1.2.
+
+\paragraph{What PPO changed relative to the rule.} PPO started as an exact
+copy of the rule and moved toward holding more water. Its outflow is the
+oldest of all policies (young fraction 0.10--0.11, versus 0.18--0.20 for
+the rule). But it ends both windows at the crest and overflows
+6{,}000--12{,}000~m$^3$ per window (the rule: 85--162~m$^3$). Its $Q_p$ is
+therefore 2--3 times the rule's. In terms of $J$, the gain in age does not
+pay for the loss in peak-flow control.
+
+\paragraph{Why: the training reward is not exactly $J$.} During training
+PPO kept improving the reward it was given: the raw reward per hour
+improved from $-0.028$ to $-0.0004$. That reward differs from $J$ in two
+ways, and both undervalue overflow:
+\begin{enumerate}\itemsep1pt
+\item the peak term is a smooth surrogate of the exceedance quantile, not
+the quantile itself;
+\item reward normalization \emph{clips} rewards at $\pm10$ standard
+deviations. That stabilized learning, but it also caps the penalty of
+exactly the rare, extreme overflow hours that determine $Q_p$.
+\end{enumerate}
+So PPO optimized the stated reward well, but the stated reward traded
+overflow for age at a different rate than $J$ does.
+
+\paragraph{What would likely close the gap.}
+\begin{itemize}\itemsep1pt
+\item Normalize rewards without clipping (or with a much wider clip), so
+the overflow penalty keeps its weight.
+\item Select the policy by $J$: evaluate checkpoints during training on
+held-out training-period windows and keep the best one, rather than the
+last.
+\item Keep the policy close to the rule unless it clearly improves on it,
+e.g.\ by penalizing deviation from the cloned rule early in training.
+\end{itemize}
+
+\paragraph{Lessons.} Two lessons stand out. First, starting from an
+engineering rule turned an RL failure into a policy competitive with a
+carefully tuned rule. Second, when the true objective (a quantile over
+three years) cannot be the reward, every simplification of it, including
+the numerical stabilizations, becomes part of the objective the agent
+actually optimizes. Whether the result is better must be judged on the
+true objective, with tuned baselines, on data the agent has not seen.

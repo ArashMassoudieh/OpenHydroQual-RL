@@ -1,0 +1,13 @@
+The first attempt trained PPO from scratch with a linear action mapping and
+raw rewards. It converged to a poor policy that opened the valve only when
+the pond was already empty, kept the pond at the crest, and scored a
+normalized $J$ of 1.13--1.23 on the test windows, barely better than the
+passive pond's 2. The final run uses the three remedies described in
+Section~\ref{sec:ppo}: the square action mapping, reward normalization, and
+a warm start by behavior cloning of the tuned forecast rule. The cloned
+actor reproduced the rule's 48{,}000 decisions to within 0.008 on the action
+scale. PPO then trained for 1.5 million hourly steps, about 2.5 hours on a
+machine shared with other jobs. Its first rollouts already scored at the
+rule's level (about $-0.005$ per hour, versus $-0.10$ from scratch). The
+raw reward per hour kept improving to about $-0.0004$ by the end, and the
+exploration spread fell from 0.30 to 0.13.

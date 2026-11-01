@@ -8,3 +8,6 @@ report/*.toc
 report/*.fls
 report/*.fdb_latexmk
 report/*.synctex.gz
+
+# Raw NOAA downloads (regenerate data/beltsville_hourly.npz with prepare_rain.py)
+data/noaa_hpd/

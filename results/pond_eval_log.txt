@@ -1,0 +1,13 @@
+best fixed opening: {'spec': ['fixed', 0.02], 'J': 0.6190834208382454, 'Q_p': 1013.816629424044, 'young': 0.39723490747312373} 
+best forecast rule: {'spec': ['rule', 0.0, 0.1, 0.015], 'J': 0.399887745223646, 'Q_p': 915.9518396294867, 'young': 0.20038637303811102}
+Open valve               window 0: J  2.000  Q_p    5182  young 0.993  peak   8391  overflow       0  end depth 0.00
+Open valve               window 1: J  2.000  Q_p    4971  young 0.993  peak   8558  overflow       0  end depth 0.00
+Fixed u=0.02             window 0: J  0.498  Q_p     697  young 0.361  peak  11986  overflow    2349  end depth 0.00
+Fixed u=0.02             window 1: J  0.450  Q_p     216  young 0.403  peak  11525  overflow    1384  end depth 0.00
+Tuned forecast rule      window 0: J  0.375  Q_p     912  young 0.197  peak  12056  overflow     162  end depth 1.55
+Tuned forecast rule      window 1: J  0.365  Q_p     896  young 0.183  peak  11111  overflow      85  end depth 1.43
+PPO                      window 0: J  0.588  Q_p    2487  young 0.107  peak  12309  overflow   11819  end depth 1.98
+PPO                      window 1: J  0.483  Q_p    1917  young 0.097  peak  12195  overflow    6277  end depth 2.00
+PPO - Open valve              : per-year dJ -1.494 +- 0.054, better in 6/6 years; dQ_p -3031, dyoung -0.892
+PPO - Fixed u=0.02            : per-year dJ +0.031 +- 0.050, better in 2/6 years; dQ_p +1616, dyoung -0.281
+PPO - Tuned forecast rule     : per-year dJ -0.078 +- 0.216, better in 2/6 years; dQ_p -12, dyoung -0.088

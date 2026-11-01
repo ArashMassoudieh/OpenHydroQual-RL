@@ -7,6 +7,8 @@ run in parallel through gymnasium's AsyncVectorEnv.
     python train_ppo.py --total-steps 200000 --num-envs 8
 """
 import argparse
+import importlib
+import json
 import os
 import time
 
@@ -18,12 +20,13 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
 import numpy as np
 import torch
 import torch.nn as nn
-import gymnasium as gym
+import multiprocessing as mp
 
 from ohq_reservoir_env import OHQReservoirEnv
 from ohq_cascade_env import CascadeEnv
+from ohq_pond_env import PondEnv
 
-ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv}
+ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv}
 
 
 class ActorCritic(nn.Module):
@@ -55,23 +58,135 @@ class ActorCritic(nn.Module):
         return a.numpy(), d.log_prob(a).sum(-1).numpy(), self.value(obs).numpy()
 
 
-def make_env(rank, seed, env_name="reservoir"):
-    def thunk():
-        env = ENVS[env_name]()
-        env.reset(seed=seed + rank)
-        return env
-    return thunk
+def rollout_worker(remote, env_name, seed, hidden):
+    """Owns one environment. On each request it loads the current policy weights
+    and collects T steps on its own, so a slow simulation step delays only this
+    worker (with lockstep vectorized environments every worker waited for the
+    slowest one, which made rare multi-second OHQ steps stall all of them)."""
+    torch.set_num_threads(1)
+    env = ENVS[env_name]()
+    obs, _ = env.reset(seed=seed)
+    model = ActorCritic(env.observation_space.shape[0], env.action_space.shape[0], hidden)
+    ep_ret = 0.0
+    while True:
+        cmd, data = remote.recv()
+        if cmd == "close":
+            env.close()
+            remote.close()
+            return
+        if cmd == "bc":
+            # Behavior cloning data: run a rule-based policy and record what it does.
+            rule_path, kwargs, T = data
+            module, fn = rule_path.split(":")
+            rule = getattr(importlib.import_module(module), fn)
+            out = {k: [] for k in ("obs", "act", "rew", "done")}
+            for _ in range(T):
+                a = np.asarray(rule(env, **kwargs), dtype=np.float32).reshape(-1)
+                next_obs, r, term, trunc, _ = env.step(a)
+                done = term or trunc
+                for k, x in zip(out, (obs, a, r, float(done))):
+                    out[k].append(x)
+                obs = env.reset()[0] if done else next_obs
+            remote.send({k: np.array(v, dtype=np.float32) for k, v in out.items()})
+            continue
+        state_dict, T = data
+        model.load_state_dict(state_dict)
+        out = {k: [] for k in ("obs", "act", "logp", "val", "rew", "done")}
+        finished = []
+        for _ in range(T):
+            a, logp, v = model.act(obs[None])
+            next_obs, r, term, trunc, _ = env.step(np.clip(a[0], -1, 1))
+            done = term or trunc
+            for k, x in zip(out, (obs, a[0], logp[0], v[0], r, float(done))):
+                out[k].append(x)
+            ep_ret += r
+            if done:
+                finished.append(ep_ret)
+                ep_ret = 0.0
+                next_obs, _ = env.reset()
+            obs = next_obs
+        with torch.no_grad():
+            last_val = float(model.value(torch.as_tensor(obs[None], dtype=torch.float32))[0])
+        remote.send(({k: np.array(v, dtype=np.float32) for k, v in out.items()}, last_val, finished))
+
+
+class RunningMeanStd:
+    def __init__(self):
+        self.mean, self.var, self.count = 0.0, 1.0, 1e-4
+
+    def update(self, x):
+        x = np.asarray(x, dtype=np.float64).ravel()
+        b_mean, b_var, b_count = x.mean(), x.var(), x.size
+        delta, tot = b_mean - self.mean, self.count + b_count
+        self.mean += delta * b_count / tot
+        self.var = (self.var * self.count + b_var * b_count + delta ** 2 * self.count * b_count / tot) / tot
+        self.count = tot
+
+
+def discounted_returns(rew, done, gamma):
+    """Monte Carlo returns of one worker's sequence (0 after the last record)."""
+    out, g = np.zeros_like(rew), 0.0
+    for t in reversed(range(len(rew))):
+        g = rew[t] + gamma * g * (1.0 - done[t])
+        out[t] = g
+    return out
+
+
+def behavior_cloning(model, remotes, args, ret_rms):
+    """Fit the actor to imitate a rule-based policy and the critic to its returns,
+    so PPO starts from (at least) the rule's performance."""
+    kwargs = json.loads(args.bc_kwargs)
+    for r_ in remotes:
+        r_.send(("bc", (args.bc_rule, kwargs, args.bc_steps)))
+    batches = [r_.recv() for r_ in remotes]
+    obs = torch.as_tensor(np.concatenate([b["obs"] for b in batches]))
+    act = torch.as_tensor(np.clip(np.concatenate([b["act"] for b in batches]), -1, 1))
+    rew = [b["rew"] for b in batches]
+    if args.normalize_rewards:              # same scaling PPO will use
+        for b, rw in zip(batches, rew):
+            acc, accs = 0.0, []
+            for x, d in zip(rw, b["done"]):
+                acc = acc * args.gamma + x
+                accs.append(acc)
+                acc *= 1.0 - d
+            ret_rms.update(accs)
+        rew = [np.clip(rw / np.sqrt(ret_rms.var + 1e-8), -10, 10) for rw in rew]
+    ret = torch.as_tensor(np.concatenate([discounted_returns(rw, b["done"], args.gamma)
+                                          for rw, b in zip(rew, batches)]))
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    n = len(obs)
+    for epoch in range(args.bc_epochs):
+        perm = torch.randperm(n)
+        for start in range(0, n, 256):
+            idx = perm[start:start + 256]
+            loss = (model.actor(obs[idx]) - act[idx]).pow(2).mean() + 0.5 * (model.value(obs[idx]) - ret[idx]).pow(2).mean()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+    with torch.no_grad():
+        a_err = (model.actor(obs) - act).abs().mean().item()
+    with torch.no_grad():
+        model.log_std.fill_(args.bc_log_std)
+    print(f"behavior cloning: {n} records from {args.bc_rule}, mean |action error| {a_err:.3f}, "
+          f"exploration std reset to {np.exp(args.bc_log_std):.2f}", flush=True)
 
 
 def train(args):
     torch.set_num_threads(1)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    envs = gym.vector.AsyncVectorEnv([make_env(i, args.seed, args.env) for i in range(args.num_envs)],
-                                     context="spawn")
-    obs_dim = envs.single_observation_space.shape[0]
-    act_dim = envs.single_action_space.shape[0]
+    probe = ENVS[args.env]()
+    obs_dim, act_dim = probe.observation_space.shape[0], probe.action_space.shape[0]
+    probe.close()
     model = ActorCritic(obs_dim, act_dim)
+    ctx = mp.get_context("spawn")
+    remotes, procs = [], []
+    for i in range(args.num_envs):
+        parent, child = ctx.Pipe()
+        p = ctx.Process(target=rollout_worker, args=(child, args.env, args.seed + i, 64), daemon=True)
+        p.start()
+        remotes.append(parent)
+        procs.append(p)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     N, T = args.num_envs, args.rollout_steps
@@ -82,31 +197,38 @@ def train(args):
     done_buf = np.zeros((T, N), np.float32)
     val_buf = np.zeros((T, N), np.float32)
 
-    obs, _ = envs.reset(seed=args.seed)
-    ep_ret = np.zeros(N)
     finished_returns = []
+    ret_rms, ret_acc = RunningMeanStd(), np.zeros(N)
+    if args.bc_rule:
+        behavior_cloning(model, remotes, args, ret_rms)
     n_updates = args.total_steps // (N * T)
     t_start = time.time()
 
     for update in range(1, n_updates + 1):
-        # ---- collect a rollout of T steps from each env
-        for t in range(T):
-            a, logp, v = model.act(obs)
-            obs_buf[t], act_buf[t], logp_buf[t], val_buf[t] = obs, a, logp, v
-            obs, r, term, trunc, _ = envs.step(np.clip(a, -1, 1))
-            done = term | trunc
-            rew_buf[t], done_buf[t] = r, done
-            ep_ret += r
-            for i in np.where(done)[0]:
-                finished_returns.append(ep_ret[i])
-                ep_ret[i] = 0.0
-            # AsyncVectorEnv autoresets on the step after done ("next-step"
-            # mode): that step's action is ignored and its obs is the reset obs.
-            # Those transitions are masked out below via done_buf of t-1.
+        # ---- collect a rollout of T steps from each worker (in parallel)
+        weights = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        for r_ in remotes:
+            r_.send(("rollout", (weights, T)))
+        last_val = np.zeros(N, np.float32)
+        for i, r_ in enumerate(remotes):
+            batch, last_val[i], finished = r_.recv()
+            obs_buf[:, i], act_buf[:, i], logp_buf[:, i] = batch["obs"], batch["act"], batch["logp"]
+            val_buf[:, i], rew_buf[:, i], done_buf[:, i] = batch["val"], batch["rew"], batch["done"]
+            finished_returns.extend(finished)
+
+        raw_rew = rew_buf.copy()
+        if args.normalize_rewards:
+            # Scale rewards by the running std of the discounted return (and clip):
+            # rare, very large penalties (pond overflow) otherwise dominate the critic.
+            accs = np.zeros((T, N))
+            for t in range(T):
+                ret_acc = ret_acc * args.gamma + rew_buf[t]
+                accs[t] = ret_acc
+                ret_acc = ret_acc * (1.0 - done_buf[t])
+            ret_rms.update(accs)
+            rew_buf = np.clip(rew_buf / np.sqrt(ret_rms.var + 1e-8), -10, 10).astype(np.float32)
 
         # ---- GAE advantages
-        with torch.no_grad():
-            last_val = model.value(torch.as_tensor(obs)).numpy()
         adv = np.zeros((T, N), np.float32)
         gae = np.zeros(N, np.float32)
         for t in reversed(range(T)):
@@ -117,9 +239,7 @@ def train(args):
             adv[t] = gae
         ret = adv + val_buf
 
-        # Drop the dummy autoreset transitions (the step right after a done).
-        valid = np.ones((T, N), bool)
-        valid[1:] = done_buf[:-1] == 0
+        valid = np.ones((T, N), bool)   # workers reset immediately: every record is real
         b_obs = torch.as_tensor(obs_buf[valid])
         b_act = torch.as_tensor(act_buf[valid])
         b_logp = torch.as_tensor(logp_buf[valid])
@@ -152,9 +272,13 @@ def train(args):
               f"episodes {len(finished_returns):4d}  "
               f"mean return (last 20) {np.mean(recent) if recent else float('nan'):8.3f}  "
               f"std {model.log_std.exp().mean().item():.3f}  "
+              f"reward/step {raw_rew[valid].mean():8.4f}  "
               f"{steps / (time.time() - t_start):.0f} steps/s", flush=True)
 
-    envs.close()
+    for r_ in remotes:
+        r_.send(("close", None))
+    for p in procs:
+        p.join(timeout=30)
     torch.save(model.state_dict(), args.out)
     print(f"saved policy to {args.out}")
 
@@ -175,4 +299,11 @@ if __name__ == "__main__":
     p.add_argument("--ent-coef", type=float, default=0.0)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="ppo_reservoir.pt")
+    p.add_argument("--normalize-rewards", action="store_true",
+                   help="scale rewards by the running std of the discounted return, clipped at +-10")
+    p.add_argument("--bc-rule", default="", help="module:function of a rule policy to imitate before PPO")
+    p.add_argument("--bc-kwargs", default="{}", help="JSON keyword arguments for the rule policy")
+    p.add_argument("--bc-steps", type=int, default=2000, help="rule steps per worker for behavior cloning")
+    p.add_argument("--bc-epochs", type=int, default=30)
+    p.add_argument("--bc-log-std", type=float, default=-1.2, help="exploration log-std after cloning")
     train(p.parse_args())

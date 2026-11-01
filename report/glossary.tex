@@ -6,8 +6,10 @@
 \item[Actor--critic] A method with both a policy network (actor) and a value network (critic). PPO is one.
 \item[Advantage ($A$, $\hat A_t$)] How much better an action turned out than the policy's average in that situation; positive means ``do this more''.
 \item[Agent] The decision maker; here the learned operating rule.
+\item[Behavior cloning] Supervised training of the actor to imitate an existing policy (here the tuned rule) from its recorded observations and actions; used as a warm start for PPO.
 \item[Baseline] (i) In this report: a comparison policy (demand only, rule curves). (ii) In RL theory: a function subtracted in the policy gradient to reduce noise; the critic plays this role.
 \item[Bellman equation] The recursion ``value now = expected reward now + discounted value next'' (Eq.~\ref{eq:bellman}); the backbone of both SDP and RL.
+\item[Bootstrapping] Building a value label partly from the critic's own prediction of the future, instead of waiting for all actual rewards.
 \item[Clipping (PPO)] Limiting the change in action probabilities per update to $\pm\epsilon$ (20\%) so that learning is stable.
 \item[Credit assignment] Working out which earlier actions caused a later reward or penalty.
 \item[Critic] The value-function network $V_\phi(o)$ that predicts the return still to come.
@@ -26,9 +28,11 @@
 \item[Neural network] A flexible parametric function built from layers of simple nonlinear units; its weights are fitted by gradient descent.
 \item[Observation ($o_t$)] The information the agent receives at a step; may be less than the full state.
 \item[On-policy] Learning only from data collected by the current policy (PPO is on-policy, so it discards data after each update).
+\item[Off-policy] Learning from data collected by older or other policies, typically stored in a replay memory (e.g.\ DQN, SAC); PPO is not off-policy.
 \item[Policy ($\pi$)] The decision rule mapping observations to actions; stochastic during training, deterministic in evaluation.
 \item[Policy gradient] The gradient of expected return with respect to the policy parameters (Eq.~\ref{eq:pg}); estimated from simulations without differentiating the simulator.
 \item[PPO] Proximal Policy Optimization: the policy-gradient actor--critic algorithm used here.
+\item[Replay memory] A store of past experience reused for many updates by off-policy methods; PPO has none and discards each batch after one update.
 \item[Return] Sum of (possibly discounted) rewards over an episode; the quantity to maximize.
 \item[Reward ($r_t$)] Scalar score of one step; its design defines the objective.
 \item[Rollout] A stretch of simulated experience collected with the current policy.
