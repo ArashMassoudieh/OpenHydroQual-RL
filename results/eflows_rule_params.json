@@ -1,0 +1,17 @@
+{
+ "minflow": {
+  "hedge_storage": 0.2,
+  "hedge_fraction": 0.85,
+  "drawdown_days": 5.0
+ },
+ "prescribed": {
+  "hedge_storage": 0.4,
+  "hedge_fraction": 0.85,
+  "drawdown_days": 15.0
+ },
+ "ffreward": {
+  "hedge_storage": 0.4,
+  "hedge_fraction": 0.85,
+  "drawdown_days": 15.0
+ }
+}

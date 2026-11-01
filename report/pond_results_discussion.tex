@@ -48,3 +48,37 @@ three years) cannot be the reward, every simplification of it, including
 the numerical stabilizations, becomes part of the objective the agent
 actually optimizes. Whether the result is better must be judged on the
 true objective, with tuned baselines, on data the agent has not seen.
+
+\paragraph{Retraining with both fixes.} PPO was retrained from the cloned
+rule, with reward normalization but \emph{no clipping}, saving a snapshot
+every 61 updates. Each snapshot was then scored by the true objective $J$
+on the two three-year validation windows: the training-period windows
+starting in 1996 and 2009, also used to tune the baselines. Holding these
+windows out of training would have left only about 4--7 years of training
+weather, because the gauge record has gaps. The test windows remained
+untouched.
+\begin{center}
+\small
+\input{pond_checkpoint_table.tex}
+\end{center}
+The answer is unambiguous: the best snapshot is the starting one, i.e.\ the
+cloned rule ($J=0.427$ against 0.400 for the rule itself on these windows).
+\emph{Every} PPO update made $J$ worse (0.48--0.76), even though the
+training reward kept improving (the last completed episodes scored $-244$,
+against $-461$ in the clipped run). Selection therefore returns the rule
+(its clone), and a test evaluation would reproduce the rule's results.
+Removing the clipping was not enough. The problem is the training reward
+itself: it values a lower young fraction more, relative to $Q_p$, than $J$
+does. Every snapshot buys older outflow (young fraction 0.10--0.14 instead
+of about 0.19) at the price of roughly doubling $Q_p$, which is a bad
+trade in terms of $J$.
+
+\paragraph{Next step: make the reward agree with $J$.} The reward weights
+($w_q=1$ on the squared excess above $Q_{ref}$, $w_y=5$ on the young load)
+were set by a rough scale argument. A principled alternative is to
+calibrate them: for the tuned baseline settings, whose $J$ is known,
+compute their reward as well, and choose $w_q$, $w_y$ and $Q_{ref}$ so that
+reward and $J$ rank the settings the same way. Alternatively, make the
+reward match $J$ by construction, e.g.\ with a terminal reward equal to
+$-J$ for each year of the episode. With both fixes in place, snapshot
+selection by $J$ guarantees that the result can be no worse than the rule.

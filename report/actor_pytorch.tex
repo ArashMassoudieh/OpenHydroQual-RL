@@ -1,0 +1,224 @@
+\subsection{Inside PyTorch: how the actor is built and how its weights change}
+\label{sec:pytorch_actor}
+This subsection opens the box: what the actor is in code, what PyTorch
+computes when it is trained, and \emph{when} its weights change as new
+simulation results arrive.
+
+\paragraph{The network is a function with adjustable coefficients.}
+In \code{train\_ppo.py} the actor is three linear layers with $\tanh$
+between them:
+\begin{lstlisting}[language=Python]
+self.actor = nn.Sequential(
+    nn.Linear(obs_dim, 64), nn.Tanh(),     # W1: 64 x obs_dim, b1: 64
+    nn.Linear(64, 64),      nn.Tanh(),     # W2: 64 x 64,      b2: 64
+    nn.Linear(64, act_dim))                # W3: act_dim x 64, b3: act_dim
+self.log_std = nn.Parameter(torch.full((act_dim,), -0.5))
+\end{lstlisting}
+Written out, the actor is the formula
+\begin{equation}
+\mu_\theta(o)=W_3\,\tanh\!\big(W_2\,\tanh(W_1 o+b_1)+b_2\big)+b_3 ,
+\label{eq:mlp}
+\end{equation}
+and $\theta$ is the list of all entries of $W_1,b_1,W_2,b_2,W_3,b_3$ plus
+$\log\sigma$. For the single reservoir ($o$ has 7 entries, one action)
+that is $7\cdot64+64+64\cdot64+64+64+1=4737$ coefficients plus $\log\sigma$.
+For the cascade (16 observations, 2 actions) it is 5378 plus two
+$\log\sigma$. The critic is a separate network of the same shape ending in
+one output, $V_\phi(o)$. \code{nn.Linear} starts each weight as a small
+random number (uniform in $\pm1/\sqrt{\text{inputs}}$). The untrained
+actor is therefore a random, nearly flat function of the state, and its
+releases are near the middle of the range.
+
+It helps to think of Eq.~\eqref{eq:mlp} as an ordinary nonlinear
+regression model with 4737 parameters. Training it is a calibration, but
+with an unusual objective. We never have a ``measured'' correct action to
+fit to. The objective is built from the simulated rewards instead.
+
+\paragraph{From the network to a probability.}
+\code{model.dist(obs)} returns the Gaussian
+$\pi_\theta(a\mid o)=\mathcal N(\mu_\theta(o),\sigma^2)$, and
+\code{log\_prob} evaluates, for a recorded action $a$,
+\begin{equation}
+\log\pi_\theta(a\mid o)=-\frac{(a-\mu_\theta(o))^2}{2\sigma^2}-\log\sigma-\tfrac12\log 2\pi
+\label{eq:logp}
+\end{equation}
+(summed over the action entries when there are two). Everything PPO does
+to the actor goes through this one number.
+
+With one action (the single reservoir) this is a univariate Gaussian. With
+two actions (the cascade, or a release plus a valve setting) it is a
+bivariate Gaussian with a \emph{diagonal} covariance,
+$\mathrm{diag}(\sigma_1^2,\sigma_2^2)$: one mean and one spread per
+action and no correlation term, which is the same as two independent
+Gaussians. In code, \code{torch.distributions.Normal(mu, log\_std.exp())}
+acts element by element and \code{log\_prob(a).sum(-1)} adds the
+per-action terms of Eq.~\eqref{eq:logp}. The two \emph{means} are still
+coupled, because both come out of the same network from the same
+observation. Only the exploration noise added to them is independent.
+
+\paragraph{Where the spread $\sigma$ comes from.}
+$\sigma$ is not computed from data. It is one more trainable parameter,
+updated by the same gradient steps as the weights. The network stores
+$\log\sigma$, one entry per action
+(\code{self.log\_std = nn.Parameter(torch.full((act\_dim,), -0.5))}), and
+uses $\sigma=e^{\log\sigma}$. Storing the logarithm keeps $\sigma$
+positive whatever value the optimizer gives it, and makes its steps
+relative: a step of 0.1 in $\log\sigma$ changes $\sigma$ by about 10\%.
+$\sigma$ does not depend on the state. Exploration is equally wide whether
+the reservoir is full or empty. A state-dependent or correlated spread is
+possible, but this simpler form is the usual PPO default and was enough
+here.
+
+\emph{Starting value.} Plain PPO starts at $\log\sigma=-0.5$, i.e.\
+$\sigma\approx0.61$ on the action range $[-1,1]$: wide exploration. After
+behavior cloning (Section~\ref{sec:ppo_extras}) the start is set by hand
+(\code{--bc-log-std}). Cloning is a least-squares fit of $\mu_\theta$ and
+carries no information about $\sigma$, and a policy that already
+imitates a good rule should explore only around it. The pond used
+$\log\sigma=-1.2$ ($\sigma\approx0.30$).
+
+\emph{How it is learned.} Because $\log\sigma$ appears in
+Eq.~\eqref{eq:logp}, \code{loss.backward()} gives it a gradient like any
+weight, and Adam updates it. For one action entry,
+\begin{equation}
+\frac{\partial\log\pi_\theta(a\mid o)}{\partial\log\sigma}
+  =\frac{(a-\mu_\theta(o))^2}{\sigma^2}-1 ,
+\label{eq:dlogsigma}
+\end{equation}
+which is positive for an action farther than one $\sigma$ from the mean and
+negative for one closer. The loss weights each record by its advantage
+$\hat A_t$. If the actions that turned out better than expected
+($\hat A>0$) lie far from $\mu$, $\sigma$ grows (``exploring wider paid
+off''). If they lie close to $\mu$, or the far-out actions were the bad
+ones ($\hat A<0$), $\sigma$ shrinks (``stay near the mean''). $\sigma$
+therefore settles where the advantage-weighted spread of actions says
+further exploration no longer pays. We use no entropy bonus
+(\code{--ent-coef 0}), so nothing else keeps $\sigma$ large, and in practice it shrinks
+as the policy improves. In the cascade run, the \code{std} column of the
+training log ($e^{\log\sigma}$) fell from 0.595 to 0.184 over 245 updates.
+
+\emph{At evaluation} $\sigma$ is not used at all: the action is the mean,
+$a=\mu_\theta(o)$.
+
+\paragraph{One training step, line by line.}
+The update loop in \code{train\_ppo.py} is:
+\begin{lstlisting}[language=Python]
+d     = model.dist(b_obs[idx])                 # forward pass: mu, sigma for 256 records
+logp  = d.log_prob(b_act[idx]).sum(-1)         # Eq. (logp) for the recorded actions
+ratio = (logp - b_logp[idx]).exp()             # rho = pi_theta / pi_old
+pg_loss = -torch.min(ratio * b_adv[idx],
+                     ratio.clamp(0.8, 1.2) * b_adv[idx]).mean()   # -L_clip
+v_loss  = 0.5 * (model.value(b_obs[idx]) - b_ret[idx]).pow(2).mean()
+loss = pg_loss + 0.5 * v_loss
+opt.zero_grad()                                # forget the previous gradient
+loss.backward()                                # dloss/dparameter for every parameter
+nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+opt.step()                                     # Adam changes the parameters
+\end{lstlisting}
+\begin{enumerate}\itemsep2pt
+\item \emph{Forward pass.} The 256 observations of the minibatch go
+  through Eq.~\eqref{eq:mlp} at once (as a $256\times\text{obs\_dim}$
+  matrix). PyTorch records every operation as it computes, building a
+  \emph{computation graph} from the parameters to \code{loss}.
+\item \emph{Inputs that are just data.} \code{b\_obs}, \code{b\_act},
+  \code{b\_logp} (the log-probability under the policy that collected the
+  data, $\pi_{\theta_{old}}$), \code{b\_adv} ($\hat A_t$) and \code{b\_ret}
+  ($\hat R_t$) were computed before the update and are constants here. In
+  particular the advantages come from the critic \emph{as it was} when the
+  rollout ended. They are not recomputed while the actor changes.
+\item \emph{Backward pass.} \code{loss.backward()} applies the chain rule
+  through the recorded graph, from \code{loss} back to every parameter,
+  and stores $\partial L/\partial\theta_i$ in each parameter's \code{.grad}.
+  This is \emph{back-propagation}. It is the same thing as an adjoint
+  sensitivity calculation, and it gives all 4737 derivatives for about the
+  cost of one extra forward pass, instead of 4737 finite-difference runs.
+\item \emph{Gradient clipping.} If the length of the whole gradient
+  vector exceeds 0.5 it is scaled down to 0.5. Its direction is kept and
+  its size is capped, a guard against one unusual minibatch throwing the
+  weights far.
+\item \emph{Adam step.} \code{opt.step()} changes each parameter (next
+  paragraph). \code{zero\_grad()} is needed because PyTorch \emph{adds}
+  new gradients to \code{.grad} rather than overwriting them.
+\end{enumerate}
+
+\paragraph{What the gradient says, for one record.}
+Take one record with advantage $\hat A$ and suppose clipping is not active.
+Its contribution to the actor loss is $-\rho\hat A$, and with
+Eq.~\eqref{eq:logp} the chain rule gives
+\begin{equation}
+\frac{\partial(-\rho\hat A)}{\partial\theta}
+= -\rho\,\hat A\,\frac{a-\mu_\theta(o)}{\sigma^2}\;\frac{\partial\mu_\theta(o)}{\partial\theta}.
+\label{eq:actor_grad}
+\end{equation}
+Gradient descent moves $\theta$ \emph{against} this. If $\hat A>0$ (the
+recorded action turned out better than the critic expected), the step
+changes the weights so that $\mu_\theta(o)$ moves \emph{toward} the action
+$a$ that was actually taken. If $\hat A<0$, it moves away from it. The
+factor $\partial\mu_\theta/\partial\theta$ is what back-propagation
+supplies. It says how each weight would have to change to move the
+network's output at this particular state $o$. Because the weights are
+shared by all states, the change also shifts the release at
+\emph{similar} states. This generalization is what lets a few thousand
+coefficients represent a rule over a continuous state space. Once
+$\rho$ leaves $[0.8,1.2]$ in the direction the advantage favors, the
+clipped term is the active one, its gradient is zero, and that record stops
+pulling. The minibatch loss averages Eq.~\eqref{eq:actor_grad} over 256
+records, so the step follows the consensus of many experiences, not any
+single one. The spread $\log\sigma$ gets its own gradient from the same
+loss. It shrinks when the advantage-weighted actions lie close to $\mu$,
+which is how exploration narrows by itself as training proceeds.
+
+\paragraph{The Adam update.}
+Adam keeps two running averages for every parameter $\theta_i$: of its
+gradient $g_i$ and of $g_i^2$. With $\beta_1=0.9$, $\beta_2=0.999$, step
+count $k$ and learning rate $\alpha=3\times10^{-4}$:
+\begin{align}
+m_i &\leftarrow \beta_1 m_i+(1-\beta_1)g_i, &
+v_i &\leftarrow \beta_2 v_i+(1-\beta_2)g_i^2,\nonumber\\
+\theta_i &\leftarrow \theta_i-\alpha\,
+  \frac{m_i/(1-\beta_1^k)}{\sqrt{v_i/(1-\beta_2^k)}+10^{-8}} .
+\label{eq:adam}
+\end{align}
+$m_i$ is a smoothed gradient (momentum) and $\sqrt{v_i}$ its typical size,
+so each parameter moves by roughly $\alpha$ per step in the direction its
+recent gradients agree on, whatever its scale. A weight whose gradient
+keeps flipping sign moves little. The divisions by $1-\beta^k$ correct the
+start-up bias of the averages, which begin at zero. One optimizer (one set
+of $m,v$) serves actor, critic and $\log\sigma$ together, and it persists
+across updates, so momentum carries over from one batch of data to the
+next.
+
+\paragraph{When the weights change as new data arrive.}
+The weights are \emph{not} updated after every simulated day. Training
+alternates between two phases:
+\begin{enumerate}\itemsep2pt
+\item \emph{Collect, weights frozen.} The current weights are copied to
+  the 16 simulator workers. Each runs 256 days with them, drawing random
+  actions from $\mathcal N(\mu_\theta(o),\sigma^2)$ and recording $o$, $a$,
+  $\log\pi_{\theta_{old}}(a\mid o)$, $V_\phi(o)$ and $r$. Nothing learns
+  during this phase. The 4{,}096 new records are then sent back.
+\item \emph{Learn, data frozen.} Advantages and returns are computed for the
+  4{,}096 records (Section~\ref{sec:ppo_data}). The records are then
+  reused for 10 epochs. Each epoch shuffles them into 16 minibatches of 256
+  and takes one Adam step per minibatch, so there are 160 weight updates
+  per batch of data. In the first minibatch $\theta=\theta_{old}$ and every
+  $\rho=1$. As the steps accumulate, $\rho$ drifts away from 1 and the
+  clipping starts to switch records off.
+\end{enumerate}
+After the 160 steps the records are \emph{discarded}, because they were
+generated by a policy that no longer exists, and the new weights go back
+to the workers for the next batch. Over the single-reservoir run this
+cycle repeats 100 times: 409{,}600 simulated days and 16{,}000 Adam steps.
+Each new batch of experience therefore enters the actor in three ways: as
+the actions $a$ (where to move $\mu$), as the advantages $\hat A$ (which
+way and how strongly), and, through the critic that is fitted on the same
+records, as better advantages in the next batch.
+
+\paragraph{Two related procedures use the same machinery.}
+\emph{Behavior cloning} (Section~\ref{sec:ppo_extras}) trains the same
+actor with the same Adam optimizer, but its loss is ordinary least
+squares, $\frac1n\sum(\mu_\theta(o)-a^{\mathrm{rule}})^2$, with the rule's
+actions as targets. That is regression in the plainest sense. At
+\emph{evaluation} no gradients are computed (\code{torch.no\_grad()}):
+the trained actor is just Eq.~\eqref{eq:mlp} evaluated with fixed
+coefficients, and its output is the release decision.

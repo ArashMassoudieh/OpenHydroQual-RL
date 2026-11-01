@@ -9,5 +9,13 @@ report/*.fls
 report/*.fdb_latexmk
 report/*.synctex.gz
 
+report_eflows/*.aux
+report_eflows/*.log
+report_eflows/*.out
+report_eflows/*.toc
+report_eflows/*.fls
+report_eflows/*.fdb_latexmk
+
 # Raw NOAA downloads (regenerate data/beltsville_hourly.npz with prepare_rain.py)
 data/noaa_hpd/
+data/raw_merced/

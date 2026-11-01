@@ -1,0 +1,8 @@
+ppo_pond_u0000.pt        J 0.427  windows [0.424 0.429]  Q_p [1042. 1101.]  young [0.19  0.198]
+ppo_pond_u0061.pt        J 0.764  windows [0.734 0.794]  Q_p [2525. 2923.]  young [0.166 0.182]
+ppo_pond_u0122.pt        J 0.555  windows [0.526 0.584]  Q_p [1862. 2140.]  young [0.108 0.136]
+ppo_pond_u0183.pt        J 0.737  windows [0.699 0.774]  Q_p [2444. 2898.]  young [0.149 0.167]
+ppo_pond_u0244.pt        J 0.703  windows [0.655 0.75 ]  Q_p [2289. 2810.]  young [0.14  0.162]
+ppo_pond_u0305.pt        J 0.480  windows [0.368 0.592]  Q_p [1167. 2165.]  young [0.106 0.138]
+ppo_pond_u0367.pt        J 0.596  windows [0.484 0.708]  Q_p [1699. 2742.]  young [0.102 0.133]
+best: results/ppo_pond_u0000.pt (J 0.427) -> results/ppo_pond.pt

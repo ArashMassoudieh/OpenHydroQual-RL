@@ -208,6 +208,8 @@ begins with sensible predictions instead of random ones.
 \end{minipage}}
 \end{center}
 
+\input{actor_pytorch.tex}
+
 \subsection{Hyperparameters and what they control}
 \begin{center}
 \small
@@ -253,16 +255,26 @@ With \code{n\_threads = 1} in OHQ and \code{OMP\_NUM\_THREADS = 1} /
 $\approx1{,}200$ environment steps per second.
 
 
-\subsection{Two optional additions used for the stormwater pond}
+\subsection{Two optional additions used for the stormwater pond}\label{sec:ppo_extras}
 \paragraph{Reward normalization.} When most steps cost almost nothing and a
 few cost thousands of times more (an hour of pond overflow), the critic's
 least-squares fit is dominated by the rare spikes and the advantage
 estimates become noisy. With \code{--normalize-rewards}, every reward is
 divided by a running estimate of the standard deviation of the discounted
 return and clipped to $[-10,10]$. Rescaling all rewards by a constant does
-not change which policy is best. Clipping does slightly change the
-objective by capping the influence of the most extreme hours, a deliberate
-trade of exactness for stable learning.
+not change which policy is best. Clipping, however, changes the objective
+by capping the influence of the most extreme hours. In the pond those
+hours (overflows) are exactly what drives the exceedance flow, so the final
+pond run scales without clipping (\code{--reward-clip 0}).
+
+\paragraph{Choosing the policy by the true objective.} The reward PPO
+optimizes is only a stand-in for the evaluation objective, so the last
+policy of a run is not necessarily the best by that objective. With
+\code{--save-every}, the trainer saves snapshots of the networks during
+training, including the starting (cloned) policy. Afterwards,
+\code{select\_checkpoint.py} runs each snapshot on validation periods,
+computes the true objective, and keeps the best. This is the RL counterpart
+of early stopping on a validation set in ordinary model fitting.
 
 \paragraph{Starting from a rule: behavior cloning.} PPO normally starts from
 a random policy and must discover everything by trial and error. With

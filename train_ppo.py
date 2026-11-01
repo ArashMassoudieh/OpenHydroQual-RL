@@ -25,8 +25,9 @@ import multiprocessing as mp
 from ohq_reservoir_env import OHQReservoirEnv
 from ohq_cascade_env import CascadeEnv
 from ohq_pond_env import PondEnv
+from ohq_eflows_env import EflowsEnv
 
-ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv}
+ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv, "eflows": EflowsEnv}
 
 
 class ActorCritic(nn.Module):
@@ -58,13 +59,13 @@ class ActorCritic(nn.Module):
         return a.numpy(), d.log_prob(a).sum(-1).numpy(), self.value(obs).numpy()
 
 
-def rollout_worker(remote, env_name, seed, hidden):
+def rollout_worker(remote, env_name, seed, hidden, env_kwargs=None):
     """Owns one environment. On each request it loads the current policy weights
     and collects T steps on its own, so a slow simulation step delays only this
     worker (with lockstep vectorized environments every worker waited for the
     slowest one, which made rare multi-second OHQ steps stall all of them)."""
     torch.set_num_threads(1)
-    env = ENVS[env_name]()
+    env = ENVS[env_name](**(env_kwargs or {}))
     obs, _ = env.reset(seed=seed)
     model = ActorCritic(env.observation_space.shape[0], env.action_space.shape[0], hidden)
     ep_ret = 0.0
@@ -91,13 +92,19 @@ def rollout_worker(remote, env_name, seed, hidden):
             continue
         state_dict, T = data
         model.load_state_dict(state_dict)
-        out = {k: [] for k in ("obs", "act", "logp", "val", "rew", "done")}
+        out = {k: [] for k in ("obs", "act", "logp", "val", "rew", "done", "boot")}
         finished = []
         for _ in range(T):
             a, logp, v = model.act(obs[None])
             next_obs, r, term, trunc, _ = env.step(np.clip(a[0], -1, 1))
             done = term or trunc
-            for k, x in zip(out, (obs, a[0], logp[0], v[0], r, float(done))):
+            # A time limit is not a terminal state: the return continues past it,
+            # so record the critic's value of the last state to bootstrap from.
+            boot = 0.0
+            if trunc and not term:
+                with torch.no_grad():
+                    boot = float(model.value(torch.as_tensor(next_obs[None], dtype=torch.float32))[0])
+            for k, x in zip(out, (obs, a[0], logp[0], v[0], r, float(done), boot)):
                 out[k].append(x)
             ep_ret += r
             if done:
@@ -121,6 +128,11 @@ class RunningMeanStd:
         self.mean += delta * b_count / tot
         self.var = (self.var * self.count + b_var * b_count + delta ** 2 * self.count * b_count / tot) / tot
         self.count = tot
+
+
+def clip_rewards(x, c):
+    """Clip normalized rewards to [-c, c]; c <= 0 disables clipping."""
+    return np.clip(x, -c, c) if c > 0 else x
 
 
 def discounted_returns(rew, done, gamma):
@@ -150,7 +162,7 @@ def behavior_cloning(model, remotes, args, ret_rms):
                 accs.append(acc)
                 acc *= 1.0 - d
             ret_rms.update(accs)
-        rew = [np.clip(rw / np.sqrt(ret_rms.var + 1e-8), -10, 10) for rw in rew]
+        rew = [clip_rewards(rw / np.sqrt(ret_rms.var + 1e-8), args.reward_clip) for rw in rew]
     ret = torch.as_tensor(np.concatenate([discounted_returns(rw, b["done"], args.gamma)
                                           for rw, b in zip(rew, batches)]))
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -175,7 +187,8 @@ def train(args):
     torch.set_num_threads(1)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    probe = ENVS[args.env]()
+    env_kwargs = json.loads(args.env_kwargs)
+    probe = ENVS[args.env](**env_kwargs)
     obs_dim, act_dim = probe.observation_space.shape[0], probe.action_space.shape[0]
     probe.close()
     model = ActorCritic(obs_dim, act_dim)
@@ -183,7 +196,7 @@ def train(args):
     remotes, procs = [], []
     for i in range(args.num_envs):
         parent, child = ctx.Pipe()
-        p = ctx.Process(target=rollout_worker, args=(child, args.env, args.seed + i, 64), daemon=True)
+        p = ctx.Process(target=rollout_worker, args=(child, args.env, args.seed + i, 64, env_kwargs), daemon=True)
         p.start()
         remotes.append(parent)
         procs.append(p)
@@ -196,11 +209,15 @@ def train(args):
     rew_buf = np.zeros((T, N), np.float32)
     done_buf = np.zeros((T, N), np.float32)
     val_buf = np.zeros((T, N), np.float32)
+    boot_buf = np.zeros((T, N), np.float32)
 
     finished_returns = []
     ret_rms, ret_acc = RunningMeanStd(), np.zeros(N)
     if args.bc_rule:
         behavior_cloning(model, remotes, args, ret_rms)
+    ckpt = lambda u: args.out.replace(".pt", f"_u{u:04d}.pt")
+    if args.save_every:
+        torch.save(model.state_dict(), ckpt(0))      # the starting policy (e.g. the cloned rule)
     n_updates = args.total_steps // (N * T)
     t_start = time.time()
 
@@ -214,6 +231,7 @@ def train(args):
             batch, last_val[i], finished = r_.recv()
             obs_buf[:, i], act_buf[:, i], logp_buf[:, i] = batch["obs"], batch["act"], batch["logp"]
             val_buf[:, i], rew_buf[:, i], done_buf[:, i] = batch["val"], batch["rew"], batch["done"]
+            boot_buf[:, i] = batch["boot"]
             finished_returns.extend(finished)
 
         raw_rew = rew_buf.copy()
@@ -226,7 +244,10 @@ def train(args):
                 accs[t] = ret_acc
                 ret_acc = ret_acc * (1.0 - done_buf[t])
             ret_rms.update(accs)
-            rew_buf = np.clip(rew_buf / np.sqrt(ret_rms.var + 1e-8), -10, 10).astype(np.float32)
+            rew_buf = clip_rewards(rew_buf / np.sqrt(ret_rms.var + 1e-8), args.reward_clip).astype(np.float32)
+        # Truncated episodes: add the discounted value of the state after the
+        # time limit (already in the critic's, i.e. normalized, units).
+        rew_buf = rew_buf + args.gamma * boot_buf
 
         # ---- GAE advantages
         adv = np.zeros((T, N), np.float32)
@@ -266,6 +287,8 @@ def train(args):
                 nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 opt.step()
 
+        if args.save_every and (update % args.save_every == 0 or update == n_updates):
+            torch.save(model.state_dict(), ckpt(update))
         recent = finished_returns[-20:]
         steps = update * N * T
         print(f"update {update:3d}/{n_updates}  steps {steps:7d}  "
@@ -286,6 +309,7 @@ def train(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--env", choices=sorted(ENVS), default="reservoir")
+    p.add_argument("--env-kwargs", default="{}", help='JSON keyword arguments for the env, e.g. \'{"scenario": "multi"}\'')
     p.add_argument("--total-steps", type=int, default=200_000)
     p.add_argument("--num-envs", type=int, default=8)
     p.add_argument("--rollout-steps", type=int, default=256)
@@ -300,7 +324,10 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="ppo_reservoir.pt")
     p.add_argument("--normalize-rewards", action="store_true",
-                   help="scale rewards by the running std of the discounted return, clipped at +-10")
+                   help="scale rewards by the running std of the discounted return (see --reward-clip)")
+    p.add_argument("--reward-clip", type=float, default=10.0,
+                   help="clip normalized rewards to +-this value; <= 0 disables clipping")
+    p.add_argument("--save-every", type=int, default=0, help="save a checkpoint every N updates (0: off)")
     p.add_argument("--bc-rule", default="", help="module:function of a rule policy to imitate before PPO")
     p.add_argument("--bc-kwargs", default="{}", help="JSON keyword arguments for the rule policy")
     p.add_argument("--bc-steps", type=int, default=2000, help="rule steps per worker for behavior cloning")
