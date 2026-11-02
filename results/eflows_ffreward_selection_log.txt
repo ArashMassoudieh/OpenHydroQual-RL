@@ -1,0 +1,21 @@
+rule                               reward/yr     4.53  supply  95.6%  ff 0.846  flood d/yr 1.7
+ppo_eflows_ffreward_u0000.pt       reward/yr     4.54  supply  95.6%  ff 0.846  flood d/yr 3.3
+ppo_eflows_ffreward_u0018.pt       reward/yr     3.90  supply  95.4%  ff 0.852  flood d/yr 4.6
+ppo_eflows_ffreward_u0036.pt       reward/yr     4.05  supply  95.5%  ff 0.854  flood d/yr 4.7
+ppo_eflows_ffreward_u0054.pt       reward/yr     3.14  supply  95.2%  ff 0.856  flood d/yr 4.7
+ppo_eflows_ffreward_u0072.pt       reward/yr     2.59  supply  95.1%  ff 0.858  flood d/yr 4.7
+ppo_eflows_ffreward_u0090.pt       reward/yr     2.14  supply  94.9%  ff 0.858  flood d/yr 4.5
+ppo_eflows_ffreward_u0108.pt       reward/yr     2.19  supply  95.0%  ff 0.857  flood d/yr 4.4
+ppo_eflows_ffreward_u0126.pt       reward/yr     3.19  supply  95.3%  ff 0.856  flood d/yr 4.6
+ppo_eflows_ffreward_u0144.pt       reward/yr     2.18  supply  95.1%  ff 0.857  flood d/yr 4.3
+ppo_eflows_ffreward_u0162.pt       reward/yr     1.46  supply  95.0%  ff 0.857  flood d/yr 4.2
+ppo_eflows_ffreward_u0180.pt       reward/yr     1.64  supply  95.1%  ff 0.852  flood d/yr 4.2
+ppo_eflows_ffreward_u0198.pt       reward/yr     0.76  supply  94.8%  ff 0.855  flood d/yr 4.0
+ppo_eflows_ffreward_u0216.pt       reward/yr     0.66  supply  94.9%  ff 0.856  flood d/yr 4.0
+ppo_eflows_ffreward_u0234.pt       reward/yr     1.27  supply  95.0%  ff 0.854  flood d/yr 4.1
+ppo_eflows_ffreward_u0252.pt       reward/yr     0.84  supply  94.7%  ff 0.857  flood d/yr 4.1
+ppo_eflows_ffreward_u0270.pt       reward/yr     1.66  supply  94.9%  ff 0.860  flood d/yr 4.1
+ppo_eflows_ffreward_u0288.pt       reward/yr     2.27  supply  95.1%  ff 0.860  flood d/yr 4.2
+ppo_eflows_ffreward_u0306.pt       reward/yr     2.04  supply  95.1%  ff 0.856  flood d/yr 4.1
+ppo_eflows_ffreward_u0324.pt       reward/yr     1.85  supply  95.1%  ff 0.853  flood d/yr 4.1
+best: results/ppo_eflows_ffreward_u0000.pt (reward/yr 4.54) -> results/ppo_eflows_ffreward.pt

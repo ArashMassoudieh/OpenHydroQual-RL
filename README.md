@@ -23,9 +23,6 @@ The full write-up, with derivations, verification and results, is in
 | `plot_eflows_setup.py`, `evaluate_eflows.py` | e-flow setup figures/tables; rule tuning, checkpoint selection, 2017-2025 comparison |
 | `report/` | LaTeX report (`latexmk -pdf main.tex`) |
 | `report_eflows/` | LaTeX report on the environmental-flow problem |
-| `ohqrl/` | **generic RL for any OHQ model**: YAML config (controls, observed states, OHQ objective functions), `OHQControlEnv` (steps the model with the OHQ stepping API), evaluation and checkpoint selection; see [ohqrl/README.md](ohqrl/README.md) |
-| `examples/pond/` | the stormwater pond as a plain OHQ script + YAML for `ohqrl` |
-| `tests/test_stepping.py` | stepped run vs single solve parity test for the OHQ stepping API |
 
 ```bash
 source ~/Projects/ohq_rl_env/bin/activate
@@ -59,3 +56,7 @@ OHQ must run single-threaded whenever models run in parallel.
 The simulator sits behind `simulate_day(t0, S0, Q) -> (S1, released, spilled)`
 and `set_inflow(t, q)`, so a codegen-compiled backend can be passed in as
 `OHQReservoirEnv(backend=...)`.
+
+## Generic RL for OpenHydroQual models
+
+The generic framework (`ohqrl`: YAML-defined controls, observed states and OHQ objective functions; the pond example; the stepping parity test; the user's manual) now lives in the OpenHydroQual repository under [`ohqrl/`](https://github.com/ArashMassoudieh/OpenHydroQual/tree/master/ohqrl). The `results/ppo_ohq_pond*` and `results/ohq_pond_*` files here come from its pond example.

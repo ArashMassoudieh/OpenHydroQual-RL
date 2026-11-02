@@ -20,5 +20,3 @@ report_eflows/*.fdb_latexmk
 data/noaa_hpd/
 data/raw_merced/
 
-# Generated example inputs (python examples/pond/make_inputs.py)
-examples/pond/inflow.txt

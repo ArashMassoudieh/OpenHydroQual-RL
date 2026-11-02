@@ -1,0 +1,347 @@
+{
+ "config": "/home/arash/Projects/OpenHydroQual-RL/examples/pond/pond.yaml",
+ "windows": "validation",
+ "starts": [
+  35209,
+  40104
+ ],
+ "table": [
+  {
+   "policy": "constant:valve=1.0",
+   "path": null,
+   "J": 6.723017533564032,
+   "objectives": {
+    "Flood": 45430.35428680455,
+    "Young": 59628.38243988888
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 1.0,
+    "Young": 1.0
+   }
+  },
+  {
+   "policy": "constant:valve=0.05",
+   "path": null,
+   "J": 2.4225476773716803,
+   "objectives": {
+    "Flood": 4300.653670922071,
+    "Young": 39548.73820317775
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.08303367235846487,
+    "Young": 0.6627249237721979
+   }
+  },
+  {
+   "policy": "constant:valve=0.1",
+   "path": null,
+   "J": 2.726337777180824,
+   "objectives": {
+    "Flood": 1741.1290617405987,
+    "Young": 49145.68996128399
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.03369869645316715,
+    "Young": 0.8242590568088962
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0000.pt",
+   "path": "results/ppo_ohq_pond_u0000.pt",
+   "J": 2.7265176239032294,
+   "objectives": {
+    "Flood": 1766.4107226810422,
+    "Young": 49111.269020853244
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.03419244416552149,
+    "Young": 0.8236762152573185
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0025.pt",
+   "path": "results/ppo_ohq_pond_u0025.pt",
+   "J": 2.7840028668013024,
+   "objectives": {
+    "Flood": 1724.5164035566959,
+    "Young": 50265.15005146708
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.03334855944459782,
+    "Young": 0.8430402231431189
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0050.pt",
+   "path": "results/ppo_ohq_pond_u0050.pt",
+   "J": 2.726071433250345,
+   "objectives": {
+    "Flood": 10717.04850625101,
+    "Young": 35707.89195528817
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.23301054704556223,
+    "Young": 0.5971034266572353
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0075.pt",
+   "path": "results/ppo_ohq_pond_u0075.pt",
+   "J": 3.189770234481749,
+   "objectives": {
+    "Flood": 24070.023608429103,
+    "Young": 24526.680579642645
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.5089453598536455,
+    "Young": 0.40975340800219573
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0100.pt",
+   "path": "results/ppo_ohq_pond_u0100.pt",
+   "J": 3.354158974658356,
+   "objectives": {
+    "Flood": 29031.89941229864,
+    "Young": 20221.50637564571
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6280559978300543,
+    "Young": 0.339011529327763
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0125.pt",
+   "path": "results/ppo_ohq_pond_u0125.pt",
+   "J": 3.4578334880596877,
+   "objectives": {
+    "Flood": 32189.550722581098,
+    "Young": 17463.932717839183
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.701177279413409,
+    "Young": 0.29218656242595187
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0150.pt",
+   "path": "results/ppo_ohq_pond_u0150.pt",
+   "J": 3.5552412563317075,
+   "objectives": {
+    "Flood": 34388.11257927832,
+    "Young": 16022.710863240261
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.7512424167045568,
+    "Young": 0.2680255923760375
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0175.pt",
+   "path": "results/ppo_ohq_pond_u0175.pt",
+   "J": 3.31018878436252,
+   "objectives": {
+    "Flood": 31390.018087861485,
+    "Young": 15857.866375804773
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.692630992807032,
+    "Young": 0.2649952741279665
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0200.pt",
+   "path": "results/ppo_ohq_pond_u0200.pt",
+   "J": 2.5356040845,
+   "objectives": {
+    "Flood": 19359.53120206488,
+    "Young": 19158.696927690486
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.42498512597616567,
+    "Young": 0.3204278334234053
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0225.pt",
+   "path": "results/ppo_ohq_pond_u0225.pt",
+   "J": 2.354598307119615,
+   "objectives": {
+    "Flood": 18262.43251616254,
+    "Young": 17364.687523817905
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.40854625550390244,
+    "Young": 0.29018435597720293
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0250.pt",
+   "path": "results/ppo_ohq_pond_u0250.pt",
+   "J": 3.012660593502595,
+   "objectives": {
+    "Flood": 28623.208085698876,
+    "Young": 14350.803369882648
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6293260581839832,
+    "Young": 0.2401354887980759
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0275.pt",
+   "path": "results/ppo_ohq_pond_u0275.pt",
+   "J": 2.5761624960912175,
+   "objectives": {
+    "Flood": 23924.559567762066,
+    "Young": 13096.869944885839
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.5469130331102112,
+    "Young": 0.2195442225866629
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0300.pt",
+   "path": "results/ppo_ohq_pond_u0300.pt",
+   "J": 3.007231233042798,
+   "objectives": {
+    "Flood": 30556.302464200446,
+    "Young": 11354.807464967744
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6790740141062452,
+    "Young": 0.19044554214360696
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0325.pt",
+   "path": "results/ppo_ohq_pond_u0325.pt",
+   "J": 3.2848519992484446,
+   "objectives": {
+    "Flood": 34243.84135371517,
+    "Young": 11106.088355802938
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.7483367410034478,
+    "Young": 0.1861325136722477
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0350.pt",
+   "path": "results/ppo_ohq_pond_u0350.pt",
+   "J": 3.2020462169379895,
+   "objectives": {
+    "Flood": 33585.60217348662,
+    "Young": 10519.344375921086
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.7191961740597617,
+    "Young": 0.1758783934023102
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0375.pt",
+   "path": "results/ppo_ohq_pond_u0375.pt",
+   "J": 2.929010920107797,
+   "objectives": {
+    "Flood": 30401.700644337136,
+    "Young": 10101.39591061963
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6533703625130355,
+    "Young": 0.1689827318906198
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0400.pt",
+   "path": "results/ppo_ohq_pond_u0400.pt",
+   "J": 2.9681125106050135,
+   "objectives": {
+    "Flood": 31384.274470531585,
+    "Young": 9373.170049086559
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6721507475416484,
+    "Young": 0.15663242544963263
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0425.pt",
+   "path": "results/ppo_ohq_pond_u0425.pt",
+   "J": 2.277621330760355,
+   "objectives": {
+    "Flood": 23124.650215337308,
+    "Young": 8627.050737868276
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.502916193621287,
+    "Young": 0.1443881817671533
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0450.pt",
+   "path": "results/ppo_ohq_pond_u0450.pt",
+   "J": 2.746735552211512,
+   "objectives": {
+    "Flood": 28374.882567081193,
+    "Young": 9674.64108838173
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6131078998255076,
+    "Young": 0.16185162042601897
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0475.pt",
+   "path": "results/ppo_ohq_pond_u0475.pt",
+   "J": 2.8676234037942887,
+   "objectives": {
+    "Flood": 29939.72410316178,
+    "Young": 9627.500320090221
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.6615266261607347,
+    "Young": 0.1613239377515972
+   }
+  },
+  {
+   "policy": "ppo:ppo_ohq_pond_u0488.pt",
+   "path": "results/ppo_ohq_pond_u0488.pt",
+   "J": 2.5375708933067367,
+   "objectives": {
+    "Flood": 26118.61615562893,
+    "Young": 9080.850303643118
+   },
+   "failed": false,
+   "normalized": {
+    "Flood": 0.5560785629168277,
+    "Young": 0.15159738610850618
+   }
+  }
+ ],
+ "best": "results/ppo_ohq_pond_u0425.pt"
+}

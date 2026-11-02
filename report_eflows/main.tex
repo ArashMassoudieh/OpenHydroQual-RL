@@ -45,10 +45,15 @@ derived from the river's own unimpaired hydrology, separately for dry,
 moderate and wet years. We compare four operating modes on the 2017--2025
 test period, which spans a record wet year, a drought and another wet year:
 (1) a regulatory minimum instream flow, (2) a prescribed functional-flow
-hydrograph, (3) functional flows in the reward, and (4) functional flows
-plus hydropower in the reward. Results are reported as irrigation
-reliability, flood days, energy and a functional-flow score between 0 and
-1.
+hydrograph, (3) functional flows in the reward, and (4) functional flows plus hydropower in the reward. Prescribing functional
+flows raises the functional-flow score from 0.57 (minimum flow) to 0.93,
+above the unimpaired river's 0.88. Overall irrigation delivery falls only
+from 99.9\% to 97.3\%, but the cost is concentrated in the third year of
+the 2020--22 drought (85\%). A PPO agent with functional flows in its
+reward, started from the prescriptive rule, did \emph{not} improve on it:
+every update made the noise-free policy worse. We document why, and the
+reward-design lessons learned on the way, which are themselves useful for
+the planned paper.
 \end{abstract}
 
 \tableofcontents
@@ -111,19 +116,22 @@ are real ones. Figure~\ref{fig:schematic} shows the model.
 
 \begin{figure}[h]
 \centering
-\begin{tikzpicture}[node distance=1.2cm and 2.2cm,
-  box/.style={draw, rounded corners, minimum width=2.6cm, minimum height=1cm, align=center, fill=blue!6},
-  sink/.style={draw, minimum width=2.4cm, minimum height=0.8cm, align=center, fill=gray!10},
-  arr/.style={-{Stealth[length=3mm]}, thick}]
-\node[box] (res) {Reservoir\\ $S_t$, $\Smin\le S\le\Scap$};
-\node[left=2.4cm of res, align=center] (in) {unimpaired inflow\\ $I_t$ (CDEC MRC)};
-\node[sink, right=2.6cm of res, yshift=1.0cm] (river) {River\\(e-flows, floods)};
-\node[sink, right=2.6cm of res, yshift=-1.0cm] (canal) {Canal\\(irrigation)};
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners, minimum width=3.2cm, minimum height=1.2cm, align=center, fill=blue!6},
+  sink/.style={draw, minimum width=2.6cm, minimum height=0.9cm, align=center, fill=gray!10},
+  arr/.style={-{Stealth[length=3mm]}, thick}, lab/.style={font=\small, align=center}]
+\node[box] (res) at (0,0) {Reservoir $S_t$\\ $\Smin\le S_t\le\Scap$};
+\node[lab] (in) at (-4,0) {unimpaired inflow $I_t$\\(CDEC MRC)};
+\node[sink] (river) at (7,1.4) {River\\(e-flows, floods)};
+\node[sink] (canal) at (7,-1.4) {Canal\\(irrigation)};
 \draw[arr] (in) -- (res);
-\draw[arr] (res.east) ++(0,0.25) -- node[above, sloped, font=\small] {river outlet $R_t$ (action 1)} (river.west);
-\draw[arr] (res.east) ++(0,-0.25) -- node[below, sloped, font=\small] {canal outlet $C_t$ (action 2)} (canal.west);
-\draw[arr, dashed] (res.north) |- node[above, pos=0.75, font=\small] {spillway $W_t$ ($S>\Scap$)} (river.north west);
-\node[below=0.25cm of res, font=\small, align=center] {both outlets pass the powerhouse\\(up to 90 m$^3$/s, head $H(S)$)};
+\draw[arr] (1.6,0.3) -- (3,0.3) -- (3,1.4) -- (river.west);
+\node[lab, above] at (4.3,1.4) {river outlet $R_t$\\(action 1)};
+\draw[arr] (1.6,-0.3) -- (3,-0.3) -- (3,-1.4) -- (canal.west);
+\node[lab, below] at (4.3,-1.4) {canal outlet $C_t$\\(action 2)};
+\draw[arr, dashed] (res.north) -- (0,2.7) -- (7,2.7) -- (river.north);
+\node[lab, above] at (3.5,2.7) {spillway $W_t$ (uncontrolled, when $S_t>\Scap$)};
+\node[lab] at (0,-1.4) {both outlets pass the powerhouse\\(up to 90 m$^3$/s, head $H(S)$)};
 \end{tikzpicture}
 \caption{The model. Every day the agent sets the river release $R_t$ and
 the canal delivery $C_t$. The spillway is uncontrolled. In OHQ the
@@ -139,7 +147,7 @@ All data are public daily series (Table~\ref{tab:data}), fetched by
 
 \begin{table}[h]
 \centering\small
-\begin{tabular}{@{}llll@{}}
+\begin{tabular}{@{}p{5.2cm}p{2.9cm}p{3.6cm}p{2.2cm}@{}}
 \toprule
 Series & Source & Use & Period \\
 \midrule
@@ -399,7 +407,7 @@ With $Q_t=R_t+W_t$ the river flow (release plus spill), the daily reward is
 the sum of these terms:
 \begin{align}
 r^{\mathrm{sup}}_t &= -w_s\left(\frac{(D_d-C_t)^+}{D_{\max}}\right)^2
-  &&\text{irrigation shortage (squared: many small cuts beat one big one)}\\
+  &&\text{irrigation shortage (squared)}\\
 r^{\mathrm{fl}}_t &= -w_f\,\frac{(Q_t-\Qsafe)^+}{\Qsafe}
   &&\text{flooding below the dam}\\
 r^{\mathrm{ff}}_t &= -w_{\mathit{ff}}\sum_{k\in\{WB,DS\}}\mathbb{1}_k(d)\,\frac{1-c_t^{(k)}}{N_k}
@@ -449,7 +457,8 @@ Scenario & Hard river floor & Reward\\
 \bottomrule
 \end{tabular}
 \end{center}
-The weights are $w_s=5$, $w_f=1$, $w_{\mathit{ff}}=5$ and $w_h=0.1$.
+The shortage is squared so that many small cuts are preferred to one big
+one, the usual reason for hedging. The weights are $w_s=5$, $w_f=1$, $w_{\mathit{ff}}=5$ and $w_h=0.1$.
 They are value judgements, not physics. A 15\% shortage spread over the
 irrigation season costs about $-16$ per year, and raising the
 functional-flow score from 0 to 1 is worth $5\times$(number of components),
@@ -614,16 +623,18 @@ optimized for the same objectives as the agents.
 
 \subsection*{Reproducing}
 \begin{verbatim}
-python prepare_merced.py                  # download CDEC/USGS data
-python plot_eflows_setup.py               # setup figures and tables
-python evaluate_eflows.py --tune          # tune the rule baselines
-python train_ppo.py --env eflows --env-kwargs '{"scenario": "ffreward"}' \
-   --total-steps 3981312 --num-envs 24 --gamma 0.995 --lr 1e-4 \
-   --normalize-rewards --reward-clip 0 --save-every 54 \
-   --bc-rule ohq_eflows_env:sop_rule --bc-kwargs '<tuned ffreward params>' \
-   --bc-log-std -2.3 --out results/ppo_eflows_ffreward.pt
-python evaluate_eflows.py --select "results/ppo_eflows_ffreward_u*.pt" --scenario ffreward
-python evaluate_eflows.py --compare       # test-period tables and figures
+python prepare_merced.py            # download CDEC/USGS data
+python plot_eflows_setup.py         # setup figures and tables
+python evaluate_eflows.py --tune    # tune the rule baselines
+python train_ppo.py --env eflows \
+  --env-kwargs '{"scenario": "ffreward", "residual": true}' \
+  --total-steps 3981312 --num-envs 24 --rollout-steps 512 \
+  --gamma 0.995 --lr 5e-5 --epochs 5 --normalize-rewards \
+  --reward-clip 0 --save-every 18 --bc-rule ohq_eflows_env:zero_policy \
+  --bc-log-std -4.6 --out results/ppo_eflows_ffreward.pt
+python evaluate_eflows.py --select "results/ppo_eflows_ffreward_u*.pt" \
+  --scenario ffreward --env-kwargs '{"residual": true}'
+python evaluate_eflows.py --compare # test-period tables and figures
 \end{verbatim}
 
 \subsection*{References}

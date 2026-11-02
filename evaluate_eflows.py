@@ -30,6 +30,21 @@ import functional_flows as ff
 
 RESULTS = "results"
 FIG = "report_eflows/figures"
+# Variant runs (e.g. a perfect forecast) use extra env options and a tag that
+# keeps their files apart: results/<name>_<tag>.*, report_eflows/<tag>/.
+EXTRA, TAG = {}, ""
+
+
+def res(name):
+    """results/ path of a file, with the run tag inserted before the extension."""
+    base, ext = os.path.splitext(name)
+    return os.path.join(RESULTS, f"{base}_{TAG}{ext}" if TAG else name)
+
+
+def rep_dir():
+    d = os.path.join("report_eflows", TAG) if TAG else "report_eflows"
+    os.makedirs(os.path.join(d, "figures"), exist_ok=True)
+    return d
 VALID_STARTS = (1990, 1996, 2002, 2008, 2012)     # training-period windows (tuning, selection)
 TEST_STARTS = (2017, 2020, 2023)
 HIST_STARTS = (1989, 1992, 1995, 1998, 2001, 2004, 2007)   # river gauge at Snelling ends 2010
@@ -54,8 +69,8 @@ def make_policy(spec, env):
 def run_window(job):
     """job = (scenario, policy spec, start water year, seed). Returns daily records."""
     from ohq_eflows_env import EflowsEnv
-    scenario, spec, start, seed = job
-    env = EflowsEnv(scenario=scenario, **(spec[2] if len(spec) > 2 else {}))
+    scenario, spec, start, seed, extra = job
+    env = EflowsEnv(scenario=scenario, **{**extra, **(spec[2] if len(spec) > 2 else {})})
     S0 = env.oct1_storage.get(start, 0.6 * env.S_cap)
     obs, _ = env.reset(seed=seed, options={"start_year": start, "storage": S0})
     policy = make_policy(spec, env)
@@ -117,7 +132,7 @@ def tune(pool):
     per year on the validation windows."""
     best = {}
     for scenario in ("minflow", "prescribed", "ffreward"):
-        jobs = [(scenario, ("rule", kw), y, 0) for kw in RULE_GRID for y in VALID_STARTS]
+        jobs = [(scenario, ("rule", kw), y, 0, EXTRA) for kw in RULE_GRID for y in VALID_STARTS]
         runs = pool.map(run_window, jobs, chunksize=1)
         n = len(VALID_STARTS)
         table = []
@@ -128,12 +143,12 @@ def tune(pool):
         best[scenario] = table[0]["kw"]
         print(f"{scenario}: best {table[0]['kw']}  reward/yr {table[0]['reward']:.2f}  "
               f"supply {table[0]['supply']:.1f}%  ff {table[0]['ff']:.3f}", flush=True)
-    json.dump(best, open(os.path.join(RESULTS, "eflows_rule_params.json"), "w"), indent=1)
+    json.dump(best, open(res("eflows_rule_params.json"), "w"), indent=1)
     return best
 
 
 def rule_params():
-    return json.load(open(os.path.join(RESULTS, "eflows_rule_params.json")))
+    return json.load(open(res("eflows_rule_params.json")))
 
 
 # --------------------------------------------------------------- selection
@@ -141,7 +156,7 @@ def select(pool, pattern, scenario, out, env_kwargs):
     ckpts = sorted(glob.glob(pattern))
     rule = ("rule", rule_params()[scenario if scenario != "multi" else "ffreward"])
     specs = [rule] + [("ppo", c, env_kwargs) for c in ckpts]
-    jobs = [(scenario, sp, y, 0) for sp in specs for y in VALID_STARTS]
+    jobs = [(scenario, sp, y, 0, EXTRA) for sp in specs for y in VALID_STARTS]
     runs = pool.map(run_window, jobs, chunksize=1)
     n = len(VALID_STARTS)
     table = []
@@ -153,7 +168,7 @@ def select(pool, pattern, scenario, out, env_kwargs):
               f"supply {s['supply']:5.1f}%  ff {s['ff']:.3f}  flood d/yr {s['flood_days']:.1f}", flush=True)
     best = max(table[1:], key=lambda r: r["reward"])
     json.dump(dict(table=table, best=best["policy"]),
-              open(os.path.join(RESULTS, f"eflows_{scenario}_selection.json"), "w"), indent=1)
+              open(res(f"eflows_{scenario}_selection.json"), "w"), indent=1)
     shutil.copy(best["policy"], out)
     # Remember how the policy's actions are interpreted (e.g. residual=True).
     json.dump(env_kwargs, open(out.replace(".pt", "_env.json"), "w"))
@@ -199,7 +214,10 @@ def policies():
     pol = [("MIF rule", "minflow", ("rule", rp["minflow"])),
            ("Prescribed FF rule", "prescribed", ("rule", rp["prescribed"]))]
     for name, scen in (("PPO, FF in reward", "ffreward"), ("PPO, FF + hydropower", "multi")):
-        path = os.path.join(RESULTS, f"ppo_eflows_{scen}.pt")
+        path = res(f"ppo_eflows_{scen}.pt")
+        sel = res(f"eflows_{scen}_selection.json")
+        if os.path.exists(sel) and json.load(open(sel))["best"].endswith("_u0000.pt"):
+            continue      # the selected policy is the starting rule itself: nothing to add
         if os.path.exists(path):
             side = path.replace(".pt", "_env.json")
             kw = json.load(open(side)) if os.path.exists(side) else {}
@@ -211,7 +229,7 @@ def compare(pool):
     pol = policies()
     out = {}
     for starts, label in ((TEST_STARTS, "test"), (HIST_STARTS, "hist")):
-        jobs = [(scen, spec, y, 0) for _, scen, spec in pol for y in starts]
+        jobs = [(scen, spec, y, 0, EXTRA) for _, scen, spec in pol for y in starts]
         runs = pool.map(run_window, jobs, chunksize=1)
         n = len(starts)
         res = {}
@@ -231,7 +249,6 @@ def fmt(x, d=1):
 
 
 def write_tables(out):
-    os.makedirs("report_eflows", exist_ok=True)
     lines = []
     for name, r in out["test"].items():
         s = r["summary"]
@@ -243,7 +260,7 @@ def write_tables(out):
     nff = lambda t: np.mean([r["ff"] for r in nat if r["type"] == t] or [np.nan])
     lines.append(f"Unimpaired flow (no dam) & -- & -- & -- & -- & -- & {np.mean([r['ff'] for r in nat]):.2f} & "
                  f"{fmt(nff('dry'), 2)} & {fmt(nff('moderate'), 2)} & {fmt(nff('wet'), 2)} & -- \\\\")
-    open("report_eflows/table_test.tex", "w").write("\n".join(lines) + "\n")
+    open(os.path.join(rep_dir(), "table_test.tex"), "w").write("\n".join(lines) + "\n")
 
     lines = []
     for name, r in out["test"].items():
@@ -253,14 +270,16 @@ def write_tables(out):
                          f"{fmt(c.get('FA'), 2)} & {fmt(c.get('WB'), 2)} & {fmt(c.get('PK'), 2)} & "
                          f"{fmt(c.get('SP'), 2)} & {fmt(c.get('DS'), 2)} & {fmt(y['ff'], 2)} \\\\")
         lines.append("\\midrule")
-    open("report_eflows/table_years.tex", "w").write("\n".join(lines[:-1]) + "\n")
+    open(os.path.join(rep_dir(), "table_years.tex"), "w").write("\n".join(lines[:-1]) + "\n")
 
-    hist, sim = out["historical"], out["hist"]["MIF rule"]["years"]
+    hist = out["historical"]
+    sim = {r["wy"]: r for r in out["hist"]["MIF rule"]["years"]}
     lines = []
-    for h, s in zip(hist, sim):
+    for h in hist:
+        s = sim[h["wy"]]
         lines.append(f"{h['wy']} & {h['type']} & {h['river_hm3']:.0f} & {s['river_hm3']:.0f} & "
                      f"{h['ff']:.2f} & {s['ff']:.2f} \\\\")
-    open("report_eflows/table_hist.tex", "w").write("\n".join(lines) + "\n")
+    open(os.path.join(rep_dir(), "table_hist.tex"), "w").write("\n".join(lines) + "\n")
 
 
 def plot(out):
@@ -293,6 +312,30 @@ def plot(out):
         fig.tight_layout()
         fig.savefig(f"{FIG}/hydrograph_{start}.pdf")
         plt.close(fig)
+    # Per water year: functional-flow score and irrigation delivered.
+    years = [r["wy"] for r in out["test"][names[0]]["years"]]
+    types = [r["type"] for r in out["test"][names[0]]["years"]]
+    x = np.arange(len(years))
+    wbar = 0.8 / (len(names) + 1)
+    fig, ax = plt.subplots(2, 1, figsize=(10, 5.5), sharex=True)
+    nat = {r["wy"]: r["ff"] for r in out["natural"]}
+    ax[0].bar(x - 0.4 + wbar / 2, [nat[y] for y in years], wbar, color="k", alpha=0.35, label="unimpaired flow")
+    for k, name in enumerate(names):
+        yr = out["test"][name]["years"]
+        ax[0].bar(x - 0.4 + wbar * (k + 1.5), [r["ff"] for r in yr], wbar, color=colors[name], label=name)
+        ax[1].bar(x - 0.4 + wbar * (k + 1.5), [r["supply"] for r in yr], wbar, color=colors[name])
+    ax[0].set_ylabel("functional-flow score")
+    ax[0].set_ylim(0, 1.05)
+    ax[1].set_ylabel("irrigation delivered [%]")
+    ax[1].set_ylim(min(50, min(r["supply"] for n in names for r in out["test"][n]["years"]) - 5), 102)
+    ax[1].set_xticks(x)
+    ax[1].set_xticklabels([f"{y}\n{t}" for y, t in zip(years, types)])
+    for a_ in ax:
+        a_.grid(alpha=0.3, axis="y")
+    ax[0].legend(fontsize=7, ncol=3, loc="lower right")
+    fig.tight_layout()
+    fig.savefig(f"{FIG}/per_year.pdf")
+    plt.close(fig)
     # Trade-off: irrigation supply vs functional-flow score.
     fig, ax = plt.subplots(figsize=(5.5, 4))
     for name in names:
@@ -316,8 +359,8 @@ def plot_training(scenario="ffreward"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    log = os.path.join(RESULTS, f"train_log_eflows_{scenario}.txt")
-    sel = os.path.join(RESULTS, f"eflows_{scenario}_selection.json")
+    log = res(f"train_log_eflows_{scenario}.txt")
+    sel = res(f"eflows_{scenario}_selection.json")
     if not (os.path.exists(log) and os.path.exists(sel)):
         return
     u, r = [], []
@@ -340,7 +383,7 @@ def plot_training(scenario="ffreward"):
     cks = [(int(re.search(r"_u(\d+)", t["policy"]).group(1)), t["reward"], t["ff"]) for t in table[1:]]
     ax[1].plot([c[0] for c in cks], [c[1] for c in cks], "o-", color="tab:red", label="PPO checkpoint")
     ax[1].axhline(rule, color="tab:blue", ls="--", label="tuned prescriptive rule")
-    ax[1].set_xlabel("PPO update (0 = cloned rule)")
+    ax[1].set_xlabel("PPO update (0 = starting policy)")
     ax[1].set_ylabel("validation reward per year")
     ax[1].grid(alpha=0.3)
     ax[1].legend(fontsize=8)
@@ -351,11 +394,15 @@ def plot_training(scenario="ffreward"):
 
 
 def main(args):
+    global EXTRA, TAG, FIG
+    EXTRA = json.loads(args.env_extra)
+    TAG = args.tag
+    FIG = os.path.join(rep_dir(), "figures")
     with Pool(args.workers) as pool:
         if args.tune:
             tune(pool)
         if args.select:
-            select(pool, args.select, args.scenario, args.out or f"{RESULTS}/ppo_eflows_{args.scenario}.pt",
+            select(pool, args.select, args.scenario, args.out or res(f"ppo_eflows_{args.scenario}.pt"),
                    json.loads(args.env_kwargs))
         if args.compare:
             out = compare(pool)
@@ -375,7 +422,7 @@ def main(args):
             slim = {lab: {n: dict(summary=r["summary"], years=r["years"]) for n, r in out[lab].items()}
                     for lab in ("test", "hist")}
             slim.update(natural=out["natural"], historical=out["historical"])
-            json.dump(slim, open(os.path.join(RESULTS, "eflows_comparison.json"), "w"), indent=1, default=float)
+            json.dump(slim, open(res("eflows_comparison.json"), "w"), indent=1, default=float)
 
 
 if __name__ == "__main__":
@@ -386,5 +433,8 @@ if __name__ == "__main__":
     p.add_argument("--out", default="")
     p.add_argument("--env-kwargs", default="{}", help="env options of the PPO policies, e.g. '{\"residual\": true}'")
     p.add_argument("--compare", action="store_true")
+    p.add_argument("--env-extra", default="{}",
+                   help='env options for every run (rules and PPO), e.g. \'{"forecast_noise": 0}\'')
+    p.add_argument("--tag", default="", help="name of a variant run; keeps its files apart")
     p.add_argument("--workers", type=int, default=30)
     main(p.parse_args())

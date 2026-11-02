@@ -159,7 +159,7 @@ class EflowsEnv(gym.Env):
                  S_cap=1264.0, S_inactive=80.0, Q_river_min=0.1, Q_river_max=300.0, Q_safe=170.0,
                  Q_turbine_max=90.0, P_max=94.5, D_peak=50.0,
                  w_supply=5.0, w_flood=1.0, w_ff=5.0, w_hp=0.1,
-                 residual=False, rule_kwargs=None, solver_dt=0.1, backend=None):
+                 residual=False, rule_kwargs=None, forecast_noise=1.0, solver_dt=0.1, backend=None):
         super().__init__()
         assert scenario in SCENARIOS, scenario
         # residual=True: the agent's action is a correction added to the action
@@ -172,6 +172,9 @@ class EflowsEnv(gym.Env):
             params = json.load(open(os.path.join(HERE, "results", "eflows_rule_params.json")))
             rule_kwargs = params["ffreward" if scenario == "multi" else scenario]
         self.rule_kwargs = rule_kwargs or {}
+        # Multiplier on the runoff-forecast error; 0 gives a perfect forecast
+        # (and so the correct year type from October 1).
+        self.forecast_noise = forecast_noise
         self.scenario = scenario
         self.episode_years = episode_years
         self.S_cap, self.S_inactive = S_cap, S_inactive
@@ -252,7 +255,7 @@ class EflowsEnv(gym.Env):
             err = np.zeros(365)
             for m in range(12):
                 z = rng.normal()
-                err[month_start[m]:month_start[m + 1]] = np.exp(sigma[m] * z - 0.5 * sigma[m] ** 2)
+                err[month_start[m]:month_start[m + 1]] = np.exp(self.forecast_noise * sigma[m] * z - 0.5 * (self.forecast_noise * sigma[m]) ** 2)
             f = rest * err
             self.forecast[365 * k:365 * (k + 1)] = f
             self.declared.append([self.classify(seen[d] + f[d]) for d in range(365)])

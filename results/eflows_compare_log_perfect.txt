@@ -1,0 +1,8 @@
+--- test
+MIF rule                 supply  99.9% (min  99.2)  flood d/yr  6.1  GWh/yr   311  river hm3/yr   680  FF 0.569  J_ff   -1.45
+Prescribed FF rule       supply  98.4% (min  90.7)  flood d/yr  7.0  GWh/yr   319  river hm3/yr   712  FF 0.999  J_ff    7.45
+--- hist
+MIF rule                 supply  99.6% (min  94.6)  flood d/yr  3.7  GWh/yr   280  river hm3/yr   479  FF 0.420  J_ff   -3.82
+Prescribed FF rule       supply  98.2% (min  87.7)  flood d/yr  3.4  GWh/yr   295  river hm3/yr   539  FF 0.964  J_ff    8.55
+natural FF (test) 0.8836394860767472
+historical FF (WY1989-2009) 0.5345998262832161

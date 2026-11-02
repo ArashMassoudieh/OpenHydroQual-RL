@@ -1,0 +1,1 @@
+{"residual": true, "rule_kwargs": {"hedge_storage": 0.3, "hedge_fraction": 0.85, "drawdown_days": 15.0}}
