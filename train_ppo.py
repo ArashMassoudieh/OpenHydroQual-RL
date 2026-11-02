@@ -26,8 +26,10 @@ from ohq_reservoir_env import OHQReservoirEnv
 from ohq_cascade_env import CascadeEnv
 from ohq_pond_env import PondEnv
 from ohq_eflows_env import EflowsEnv
+from ohqrl.env import OHQControlEnv
 
-ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv, "eflows": EflowsEnv}
+ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv, "eflows": EflowsEnv,
+        "ohq": OHQControlEnv}   # generic: --env ohq --env-kwargs '{"config": "<file>.yaml"}'
 
 
 class ActorCritic(nn.Module):

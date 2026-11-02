@@ -23,6 +23,9 @@ The full write-up, with derivations, verification and results, is in
 | `plot_eflows_setup.py`, `evaluate_eflows.py` | e-flow setup figures/tables; rule tuning, checkpoint selection, 2017-2025 comparison |
 | `report/` | LaTeX report (`latexmk -pdf main.tex`) |
 | `report_eflows/` | LaTeX report on the environmental-flow problem |
+| `ohqrl/` | **generic RL for any OHQ model**: YAML config (controls, observed states, OHQ objective functions), `OHQControlEnv` (steps the model with the OHQ stepping API), evaluation and checkpoint selection; see [ohqrl/README.md](ohqrl/README.md) |
+| `examples/pond/` | the stormwater pond as a plain OHQ script + YAML for `ohqrl` |
+| `tests/test_stepping.py` | stepped run vs single solve parity test for the OHQ stepping API |
 
 ```bash
 source ~/Projects/ohq_rl_env/bin/activate
