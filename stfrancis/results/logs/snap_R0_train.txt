@@ -1,1 +1,0 @@
-R0_train 5840 snapshots; {'Excess': np.float64(214.24224039284593), 'Age_Load': np.float64(905.1150279844544)}

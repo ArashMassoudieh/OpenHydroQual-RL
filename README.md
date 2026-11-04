@@ -1,5 +1,20 @@
 # OpenHydroQual-RL
 
+## Papers and experiment artifacts
+
+Paper sources, PDFs, figures, evaluation results, logs and trained checkpoints
+are maintained separately from this code repository. On the research workstation
+they live in `/home/arash/Dropbox/OHQ RL paper/OpenHydroQual-RL/`, preserving
+the repository-relative layout (`report/`, `report_eflows/`, `results/`,
+`stfrancis/paper/` and `stfrancis/results/`). Ignored local symbolic links
+at those paths let the existing scripts and commands continue to work.
+On another machine, restore the artifact directories or create the same links
+before evaluating saved policies or rebuilding papers. New runs can also create
+their own ignored output directories at these paths.
+
+The large `stfrancis_benchmark/` reproduction scratch directory remains local
+and is ignored; it is not part of the Dropbox paper archive.
+
 Closed-loop reinforcement learning (PPO, PyTorch) for operating a reservoir
 simulated by OpenHydroQual through the `openhydroqual_py` bindings.
 The full write-up, with derivations, verification and results, is in

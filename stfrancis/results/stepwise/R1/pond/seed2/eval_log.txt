@@ -1,1 +1,0 @@
-{'features': ['pond'], 'failed': False, 'train': {'J': np.float64(0.14992567897528936), 'Excess_rel': np.float64(0.07695719001581526), 'Age_rel': np.float64(0.07296848895947408)}, 'test': {'J': np.float64(0.637179427375615), 'Excess_rel': np.float64(0.38443500952360266), 'Age_rel': np.float64(0.2527444178520123)}}

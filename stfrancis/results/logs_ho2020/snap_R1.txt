@@ -1,1 +1,0 @@
-R1_ho2020 5840 snapshots; {'Excess': np.float64(438.56435500218606), 'Age_Load': np.float64(527.9633735741738)}

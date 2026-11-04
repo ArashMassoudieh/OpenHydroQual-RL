@@ -1,1 +1,0 @@
-{'features': ['season'], 'failed': False, 'train': {'J': np.float64(3.491652815356769), 'Excess_rel': np.float64(2.42700834114313), 'Age_rel': np.float64(1.064644474213639)}, 'test': {'J': np.float64(2.9827283248204113), 'Excess_rel': np.float64(1.9189083674964342), 'Age_rel': np.float64(1.063819957323977)}}

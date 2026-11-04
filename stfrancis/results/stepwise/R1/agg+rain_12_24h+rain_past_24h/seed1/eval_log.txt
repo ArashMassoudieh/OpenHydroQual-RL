@@ -1,1 +1,0 @@
-{'features': ['agg', 'rain_12_24h', 'rain_past_24h'], 'failed': False, 'train': {'J': np.float64(0.19589543996016157), 'Excess_rel': np.float64(0.10838747620235058), 'Age_rel': np.float64(0.08750796375781097)}, 'test': {'J': np.float64(0.8070258621430919), 'Excess_rel': np.float64(0.48648553271466327), 'Age_rel': np.float64(0.3205403294284286)}}

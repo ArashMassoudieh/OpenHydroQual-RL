@@ -3,6 +3,12 @@
 Underdrain-valve control of the St. Francis cell (half footprint, 30.2 mm), perfect rainfall
 forecast, 2020-2023. Write-up: `paper/main.pdf`.
 
+Paper sources and generated results are stored outside Git, under
+`/home/arash/Dropbox/OHQ RL paper/OpenHydroQual-RL/stfrancis/` on the
+research workstation. Ignored local links named `paper` and `results` preserve
+the paths used below. Obtain these artifacts separately when using an existing
+policy or rebuilding the write-up; compiled kernels must still be regenerated.
+
 Objectives (integrals, normalized by the passive cell):
 `J = Excess/Excess_p + R * Age_Load/Age_p`, Excess = ∫max(Q - 50 m³/d, 0) dt.
 R = 0 is case 1 (excess only), R = 1 is case 2 (excess + residence time).

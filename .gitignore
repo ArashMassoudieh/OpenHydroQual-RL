@@ -1,5 +1,12 @@
 __pycache__/
 *.pyc
+# Papers, generated results and local links are stored outside version control.
+/report
+/report_eflows
+/results
+/stfrancis/paper
+/stfrancis/results
+/stfrancis_benchmark/
 # LaTeX build files
 report/*.aux
 report/*.log
