@@ -10,6 +10,7 @@ import argparse
 import importlib
 import json
 import os
+import sys
 import time
 
 # One tiny OHQ model per worker process: keep every library single-threaded,
@@ -26,8 +27,11 @@ from ohq_reservoir_env import OHQReservoirEnv
 from ohq_cascade_env import CascadeEnv
 from ohq_pond_env import PondEnv
 from ohq_eflows_env import EflowsEnv
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "stfrancis"))
+from sf_env import StFrancisEnv   # noqa: E402  (compiled-kernel bioretention cell)
 
-ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv, "eflows": EflowsEnv}
+ENVS = {"reservoir": OHQReservoirEnv, "cascade": CascadeEnv, "pond": PondEnv, "eflows": EflowsEnv,
+        "stfrancis": StFrancisEnv}
 
 
 class ActorCritic(nn.Module):

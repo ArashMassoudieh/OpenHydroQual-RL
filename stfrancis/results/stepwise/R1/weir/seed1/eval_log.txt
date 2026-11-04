@@ -1,0 +1,1 @@
+{'features': ['weir'], 'failed': False, 'train': {'J': np.float64(3.7133252326888218), 'Excess_rel': np.float64(2.8670220385071685), 'Age_rel': np.float64(0.8463031941816533)}, 'test': {'J': np.float64(3.0409343043280925), 'Excess_rel': np.float64(2.1682153648678084), 'Age_rel': np.float64(0.8727189394602843)}}

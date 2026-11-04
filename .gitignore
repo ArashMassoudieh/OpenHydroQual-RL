@@ -20,3 +20,15 @@ report_eflows/*.fdb_latexmk
 data/noaa_hpd/
 data/raw_merced/
 
+
+# St. Francis: compiled kernels (machine-specific; regenerate with ohq_generate),
+# PPO checkpoints (shared separately), scratch output and LaTeX build files
+stfrancis/kernels/
+stfrancis/work/
+stfrancis/work_*
+stfrancis/**/*.pt
+stfrancis/paper/*.aux
+stfrancis/paper/*.log
+stfrancis/paper/*.out
+stfrancis/paper/*.fls
+stfrancis/paper/*.fdb_latexmk

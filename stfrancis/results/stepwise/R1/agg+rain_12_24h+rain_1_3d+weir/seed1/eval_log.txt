@@ -1,0 +1,1 @@
+{'features': ['agg', 'rain_12_24h', 'rain_1_3d', 'weir'], 'failed': False, 'train': {'J': np.float64(0.135927822944124), 'Excess_rel': np.float64(0.02985773642653308), 'Age_rel': np.float64(0.10607008651759092)}, 'test': {'J': np.float64(0.6245847428552671), 'Excess_rel': np.float64(0.3521922071221739), 'Age_rel': np.float64(0.2723925357330932)}}

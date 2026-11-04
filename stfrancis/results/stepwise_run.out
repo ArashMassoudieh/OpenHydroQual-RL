@@ -1,0 +1,15 @@
+Running as unit: sf-stepwise.scope; invocation ID: d7d15da6fe774d4f9842322eb63c9a8d
+2026-11-02 23:16:31 stepwise selection: cases [1], split ho2020, 1000000 steps x seeds [1, 2], pool ['pond', 'agg', 'outflow', 'weir', 'rain_0_3h', 'rain_3_12h', 'rain_12_24h', 'rain_1_3d', 'rain_3_7d', 'rain_past_24h', 'ihat', 'season']
+2026-11-02 23:16:31 R1: reference (tuned rule, hourly) train J 0.13116  test J 0.67279
+2026-11-02 23:52:21 R1 round 1: add agg            train J 0.12556 (seeds 0.1469, 0.1042)  test J 0.62133  gain +4.3%
+2026-11-03 00:27:12 R1 round 2: add rain_12_24h    train J 0.09801 (seeds 0.1065, 0.0895)  test J 0.55756  gain +21.9%
+2026-11-03 00:56:55 R1 round 3: add rain_1_3d      train J 0.10432 (seeds 0.0992, 0.1095)  test J 0.59831  gain -6.4%
+2026-11-03 01:26:14 R1 round 4: add ihat           train J 0.07626 (seeds 0.0700, 0.0825)  test J 0.49605  gain +22.2%
+2026-11-03 01:49:49 R1 round 5: add pond           train J 0.06478 (seeds 0.0705, 0.0590)  test J 0.41855  gain +15.1%
+2026-11-03 02:13:34 R1 round 6: add rain_past_24h  train J 0.05691 (seeds 0.0646, 0.0492)  test J 0.44347  gain +12.1%
+2026-11-03 02:31:05 R1 round 7: add rain_3_7d      train J 0.04970 (seeds 0.0518, 0.0476)  test J 0.44448  gain +12.7%
+2026-11-03 02:48:20 R1 round 8: add rain_3_12h     train J 0.04108 (seeds 0.0414, 0.0408)  test J 0.41178  gain +17.3%
+2026-11-03 03:00:12 R1 round 9: add rain_0_3h      train J 0.05296 (seeds 0.0531, 0.0528)  test J 0.42599  gain -28.9%
+2026-11-03 03:12:39 R1 round 10: add outflow        train J 0.09381 (seeds 0.0599, 0.1277)  test J 0.53572  gain -128.3%
+2026-11-03 03:12:39 R1: stopping, no gain >= 1% for 2 rounds
+2026-11-03 03:12:39 R1: selected ['agg', 'rain_12_24h', 'rain_1_3d', 'ihat', 'pond', 'rain_past_24h', 'rain_3_7d', 'rain_3_12h', 'rain_0_3h', 'outflow']

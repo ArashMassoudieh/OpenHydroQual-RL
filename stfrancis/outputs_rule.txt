@@ -1,0 +1,10 @@
+# ohq_generate --outputs: '<object glob> <quantity>' (object names may not contain spaces: use ?)
+Catch?basin?(2)?-?fixed_head?(3) flow
+Aggregate_storage_layer?(1)?-?Catch?basin?(2) flow
+Pond?(1)?-?Catch?basin?(2) flow
+Pond?(1) Storage
+Aggregate_storage_layer?(1) Storage
+Upper_ENg_soil Storage
+Lowersoil_native Storage
+Catch?basin?(2) Storage
+Aggregate_storage_layer?(1)?-?Catch?basin?(2) kernel_smoothed_forcast

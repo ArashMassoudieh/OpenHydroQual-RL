@@ -1,0 +1,16 @@
+{
+ "params": {
+  "S": 271.52845090352474,
+  "I0": 1.614632949613963e-06,
+  "tau_k": 4.494153604838911
+ },
+ "J": 0.07681622484500597,
+ "Excess": 214.57132831473842,
+ "Age_Load": 901.4502796608053,
+ "R": 0.0,
+ "Excess_rel": 0.07681622484500597,
+ "Age_rel": 0.32742922450343936,
+ "minutes": 9.807539840539297,
+ "convention": "ekr-trapezoid",
+ "note": "S and I0 halved after the OHQ fix of the exponential kernel (missing 1/2); same controller, same J"
+}

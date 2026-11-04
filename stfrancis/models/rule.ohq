@@ -1,0 +1,115 @@
+loadtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/main_components.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/main_components.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/Pond_Plugin.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/unsaturated_soil.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/Sewer_system.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/soil_evapotranspiration_models.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/groundwater.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/precipitation_forcast.json
+addtemplate; filename = /home/arash/Projects/OpenHydroQual/resources/mass_transfer.json
+setvalue; object=system, quantity=acceptance_rate, value=0.15
+setvalue; object=system, quantity=add_noise_to_realizations, value=No
+setvalue; object=system, quantity=continue_based_on_file_name, value=
+setvalue; object=system, quantity=initial_purturbation, value=No
+setvalue; object=system, quantity=initual_purturbation_factor, value=0.05
+setvalue; object=system, quantity=number_of_burnout_samples, value=0
+setvalue; object=system, quantity=number_of_chains, value=8
+setvalue; object=system, quantity=number_of_post_estimate_realizations, value=8
+setvalue; object=system, quantity=number_of_samples, value=1000
+setvalue; object=system, quantity=number_of_threads, value=8
+setvalue; object=system, quantity=perform_global_sensitivity, value=No
+setvalue; object=system, quantity=purturbation_change_scale, value=0.75
+setvalue; object=system, quantity=record_interval, value=1
+setvalue; object=system, quantity=samples_filename, value=mcmc.txt
+setvalue; object=system, quantity=alloutputfile, value=
+setvalue; object=system, quantity=observed_outputfile, value=observedoutput.txt
+setvalue; object=system, quantity=simulation_end_time, value=45291
+setvalue; object=system, quantity=simulation_start_time, value=43831
+setvalue; object=system, quantity=maxpop, value=24
+setvalue; object=system, quantity=ngen, value=50
+setvalue; object=system, quantity=numthreads, value=8
+setvalue; object=system, quantity=outputfile, value=GA_output.txt
+setvalue; object=system, quantity=pcross, value=1
+setvalue; object=system, quantity=pmute, value=0.02
+setvalue; object=system, quantity=shakescale, value=0.05
+setvalue; object=system, quantity=shakescalered, value=0.75
+setvalue; object=system, quantity=c_n_weight, value=1
+setvalue; object=system, quantity=initial_time_step, value=0.01
+setvalue; object=system, quantity=jacobian_assembly, value=Dependency
+setvalue; object=system, quantity=jacobian_method, value=Inverse Jacobian
+setvalue; object=system, quantity=max_timestep_decrease_factor, value=100000
+setvalue; object=system, quantity=max_timestep_increase_factor, value=10
+setvalue; object=system, quantity=maximum_number_of_matrix_inverstions, value=200000
+setvalue; object=system, quantity=maximum_time_allowed, value=7200
+setvalue; object=system, quantity=minimum_timestep, value=1e-06
+setvalue; object=system, quantity=n_threads, value=1
+setvalue; object=system, quantity=nr_timestep_reduction_factor, value=0.75
+setvalue; object=system, quantity=nr_timestep_reduction_factor_fail, value=0.2
+setvalue; object=system, quantity=nr_tolerance, value=1e-05
+setvalue; object=system, quantity=verify_jacobian, value=
+setvalue; object=system, quantity=write_interval, value=100
+setvalue; object=system, quantity=write_solution_details, value=No
+create constituent;type=AgeTracker_laplace,concentration=0[g/m~^3],decay_parameter=0,diffusion_coefficient=0[m~^2/s],external_mass_flow_timeseries=,external_source=,inflow_concentration=0,name=AgeTracker_laplace_1,stoichiometric_constant=0
+create reaction_parameter;type=ReactionParameter,Arrhenius_factor=1,base_value=1.0,name=Laplace_param,reference_temperature=0,temperature=
+create reaction;type=Reaction,AgeTracker_laplace_1:stoichiometric_constant=-1,name=decay,rate_expression=(Laplace_param*AgeTracker_laplace_1)
+create source;type=Evapotranspiration_Penman (Soil),R_h=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Humidity/Humidity 2020_2023.txt,Temperature=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Temperature/Temperature 2020_2023.txt,gamma=66.8,name=Evapotranspiration_Penman (Soil) (1),solar_radiation=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Solar_Radiation/Solar_Radiation 2020_2023.txt,solar_scale_fact=0.8,wind_scale_fact=0.8,wind_speed=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Wind speed/Wind speed 2020_2023.txt,z0=0.0003,z2=2
+create source;type=Precipitation,name=rain,timeseries=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Precipitation/Precipitation 2020_2023.txt
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=Evapotranspiration_Penman (Soil) (1),K_sat_original=1.99132,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=227,_width=526,act_X=0,act_Y=0,alpha=0.307626,aniso_ratio=1,area=2100,bottom_elevation=168.5,depth=0.5,n=1.41,name=Top_Soil_3,specific_storage=0.01,theta=0.2,theta_res=0.05,theta_sat=0.35,x=-265,y=433
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0999045,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=192,_width=481,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=2100,bottom_elevation=168,depth=0.5,n=1.41,name=Mid_Soil_3,specific_storage=0.01,theta=0.2,theta_res=0.05,theta_sat=0.35,x=-222,y=982
+create block;type=Catchment,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,ManningCoeff=0.689463,Precipitation=rain,Runoff_coeff=1,Slope=0.12,Width=60,_height=269,_width=744,area=2100[m~^2],depression_storage=0,depth=0,elevation=169,inflow=,loss_coefficient=0,name=Catchment (3),x=-418,y=-31
+create block;type=Catchment,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,ManningCoeff=0.199992,Precipitation=rain,Runoff_coeff=1,Slope=0.005,Width=20,_height=507,_width=631,area=1000[m~^2],depression_storage=0,depth=0,elevation=164,inflow=,loss_coefficient=0,name=Catchment (4),x=706,y=363
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0999045,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=218,_width=502,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=2100,bottom_elevation=166.6,depth=1.4,n=1.41,name=Bottom_soil_3,specific_storage=0.01,theta=0.2,theta_res=0.1,theta_sat=0.4,x=-147,y=1456
+create block;type=fixed_head,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Storage=100000[m~^3],_height=356,_width=454,head=0,name=fixed_head (4),x=-1049,y=2002
+create block;type=Catchment,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,ManningCoeff=0.689463,Precipitation=rain,Runoff_coeff=1,Slope=0.12,Width=60,_height=269,_width=744,area=2100[m~^2],depression_storage=0,depth=0,elevation=175,inflow=,loss_coefficient=0,name=Catchment (1),x=-2383,y=-143
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=Evapotranspiration_Penman (Soil) (1),K_sat_original=1.99132,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=203,_width=509,act_X=0,act_Y=0,alpha=0.307626,aniso_ratio=1,area=2100,bottom_elevation=173.5,depth=0.5,n=1.41,name=Soil (1),specific_storage=0.01,theta=0.2,theta_res=0.05,theta_sat=0.35,x=-2280,y=406
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0999045,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=192,_width=481,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=2100,bottom_elevation=173,depth=0.5,n=1.41,name=Soil (2),specific_storage=0.01,theta=0.2,theta_res=0.05,theta_sat=0.35,x=-2237,y=907
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0999045,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=218,_width=502,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=2100,bottom_elevation=170,depth=1.4,n=1.41,name=Soil (3),specific_storage=0.01,theta=0.2,theta_res=0.1,theta_sat=0.4,x=-2271,y=1366
+create block;type=Catchment,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,ManningCoeff=0.689463,Precipitation=rain,Runoff_coeff=1,Slope=0.12,Width=60,_height=269,_width=744,area=2100[m~^2],depression_storage=0,depth=0,elevation=172,inflow=,loss_coefficient=0,name=Catchment (2),x=-1321,y=-58
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=Evapotranspiration_Penman (Soil) (1),K_sat_original=1.99132,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=203,_width=509,act_X=0,act_Y=0,alpha=0.307626,aniso_ratio=1,area=2100,bottom_elevation=171.5,depth=0.5,n=1.41,name=Soil (4),specific_storage=0.01,theta=0.2,theta_res=0.05,theta_sat=0.35,x=-1210,y=429
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0999045,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=192,_width=481,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=2100,bottom_elevation=171,depth=0.5,n=1.41,name=Soil (5),specific_storage=0.01,theta=0.2,theta_res=0.05,theta_sat=0.35,x=-1180,y=920
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0999045,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=218,_width=502,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=2100,bottom_elevation=168,depth=1.4,n=1.41,name=Soil (6),specific_storage=0.01,theta=0.2,theta_res=0.1,theta_sat=0.4,x=-1152,y=1359
+create block;type=Pond,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,Precipitation=rain,Storage=0.005,_height=480,_width=587,alpha=8865,alpha_multiplier=0.5,beta=2,bottom_elevation=158,inflow=,name=Pond (1),x=1907,y=540
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=Evapotranspiration_Penman (Soil) (1),K_sat_original=4.52945,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=196,_width=508,act_X=0,act_Y=0,alpha=3,aniso_ratio=1,area=177.2,bottom_elevation=157.37,depth=0.63,n=2.95,name=Upper_ENg_soil,specific_storage=0.01,theta=0.25,theta_res=0.1,theta_sat=0.4,x=1965,y=1256
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0166992,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=327,_width=646,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=150.55,bottom_elevation=156,depth=1,n=1.31,name=Lowersoil_native,specific_storage=0.01,theta=0.37,theta_res=0.05,theta_sat=0.4,x=1885,y=2069
+create block;type=Soil,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Evapotranspiration=,K_sat_original=0.0166992,K_sat_scale_factor=1,MC_to_EC_Threshold_Moisture=0,MC_to_EC_coefficient=0,MC_to_EC_exponent=0,_height=319,_width=720,act_X=0,act_Y=0,alpha=1,aniso_ratio=1,area=150.5,bottom_elevation=154,depth=2,n=1.41,name=Soil (7),specific_storage=0.01,theta=0.35,theta_res=0.05,theta_sat=0.4,x=1853,y=2627
+create block;type=fixed_head,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Storage=100000[m~^3],_height=283,_width=642,head=150,name=fixed_head (1),x=1896,y=3255
+create block;type=Catch basin,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,_height=236,_width=588,area=4,bottom_elevation=157,inflow=,name=Catch basin (2),x=3203,y=940
+create block;type=fixed_head,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,Storage=100000[m~^3],_height=277,_width=768,head=140,name=fixed_head (3),x=3885,y=1381
+create block;type=Aggregate_storage_layer,AgeTracker_laplace_1:concentration=0[g/m~^3],AgeTracker_laplace_1:external_mass_flow_timeseries=,AgeTracker_laplace_1:external_source=,AgeTracker_laplace_1:inflow_concentration=1,K_sat=1,_height=171,_width=616,area=177.26,bottom_elevation=157,depth=0,inflow=,name=Aggregate_storage_layer (1),porosity=0.4,x=1928,y=1662
+create link;from=Mid_Soil_3,to=Bottom_soil_3,type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Mid_Soil_3 - Bottom_soil_3
+create link;from=Catchment (3),to=Catchment (4),type=Catchment_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (3) - Catchment (4)
+create link;from=Top_Soil_3,to=Catchment (4),type=soil_to_fixedhead_link_H,AgeTracker_laplace_1:decay_parameter=0,area=60,length=0.2,name=Top_Soil_3 - Catchment (4),outlet_head=164.161
+create link;from=Catchment (3),to=Top_Soil_3,type=surfacewater_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (3) - Top_Soil_3
+create link;from=Bottom_soil_3,to=fixed_head (4),type=soil_to_fixedhead_link,AgeTracker_laplace_1:decay_parameter=0,name=Bottom_soil_3 - fixed_head (4)
+create link;from=Top_Soil_3,to=Mid_Soil_3,type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Top_Soil_3 - Mid_Soil_3
+create link;from=Soil (1),to=Soil (2),type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (1) - Soil (2)
+create link;from=Soil (4),to=Soil (5),type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (4) - Soil (5)
+create link;from=Soil (2),to=Soil (3),type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (2) - Soil (3)
+create link;from=Soil (5),to=Soil (6),type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (5) - Soil (6)
+create link;from=Soil (1),to=Soil (4),type=soil_to_soil_H_link,AgeTracker_laplace_1:decay_parameter=0,area=60,length=0.2,name=Soil (1) - Soil (4)
+create link;from=Soil (4),to=Top_Soil_3,type=soil_to_soil_H_link,AgeTracker_laplace_1:decay_parameter=0,area=60,length=0.2,name=Soil (4) - Top_Soil_3
+create link;from=Catchment (1),to=Catchment (2),type=Catchment_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (1) - Catchment (2)
+create link;from=Catchment (2),to=Catchment (3),type=Catchment_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (2) - Catchment (3)
+create link;from=Soil (3),to=fixed_head (4),type=soil_to_fixedhead_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (3) - fixed_head (4)
+create link;from=Soil (6),to=fixed_head (4),type=soil_to_fixedhead_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (6) - fixed_head (4)
+create link;from=Soil (2),to=Soil (5),type=soil_to_soil_H_link,AgeTracker_laplace_1:decay_parameter=0,area=60,length=0.2,name=Soil (2) - Soil (5)
+create link;from=Soil (5),to=Mid_Soil_3,type=soil_to_soil_H_link,AgeTracker_laplace_1:decay_parameter=0,area=60,length=0.2,name=Soil (5) - Mid_Soil_3
+create link;from=Catchment (4),to=Pond (1),type=Catchment_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (4) - Pond (1)
+create link;from=Pond (1),to=Upper_ENg_soil,type=surfacewater_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Pond (1) - Upper_ENg_soil
+create link;from=Lowersoil_native,to=Soil (7),type=soil_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Lowersoil_native - Soil (7)
+create link;from=Soil (7),to=fixed_head (1),type=soil_to_fixedhead_link,AgeTracker_laplace_1:decay_parameter=0,name=Soil (7) - fixed_head (1)
+create link;from=Catch basin (2),to=fixed_head (3),type=Sewer_pipe,AgeTracker_laplace_1:decay_parameter=0,ManningCoeff=0.01,diameter=0.3,end_elevation=140,length=5,name=Catch basin (2) - fixed_head (3),start_elevation=154.75
+create link;from=Catchment (1),to=Soil (1),type=surfacewater_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (1) - Soil (1)
+create link;from=Catchment (2),to=Soil (4),type=surfacewater_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Catchment (2) - Soil (4)
+create link;from=Aggregate_storage_layer (1),to=Lowersoil_native,type=aggregate_to_soil_link,AgeTracker_laplace_1:decay_parameter=0,name=Aggregate_storage_layer (3) - Lowersoil_native
+create link;from=Upper_ENg_soil,to=Aggregate_storage_layer (1),type=soil_to_aggregate_link,AgeTracker_laplace_1:decay_parameter=0,name=Upper_ENg_soil - Aggregate_storage_layer (1)
+create link;from=Pond (1),to=Catch basin (2),type=wier,AgeTracker_laplace_1:decay_parameter=0,alpha=158976,beta=1.5,crest_elevation=158.2,name=Pond (1) - Catch basin (2)
+create link;from=Aggregate_storage_layer (1),to=Catch basin (2),type=Flow_control_device (function uncertain),AgeTracker_laplace_1:decay_parameter=0,diameter=0.2,flow_scale=20,kernel_delay_parameter=5,name=Aggregate_storage_layer (1) - Catch basin (2),threshold=0,time_scale=2,timeseries=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Precipitation/Precipitation 2020_2023.txt,timeseries_corrupted=/home/arash/Dropbox/St. Francis RTC paper/Residence Time Runs 2026/data/Precipitation/Precipitation 2020_2023_corrupted_sigma0_tau2d_renorm.txt
+create objectivefunction;type=Objective_Function,exceedance_probability=0.05,expression=_pos(flow-50),method=integrate,name=Excess,object=Catch basin (2) - fixed_head (3),weight=1
+create objectivefunction;type=Objective_Function,exceedance_probability=0.05,expression=AgeTracker_laplace_1:advective_masstransfer,method=integrate,name=Age_Load,object=Catch basin (2) - fixed_head (3),weight=1
+create parameter;type=Parameter,high=4000,low=10,name=S,prior_distribution=log-normal,value=500
+create parameter;type=Parameter,high=0.03,low=1e-06,name=I0,prior_distribution=log-normal,value=0.01
+create parameter;type=Parameter,high=100,low=0.001,name=tau_k,prior_distribution=log-normal,value=2
+setasparameter; object= Aggregate_storage_layer (1) - Catch basin (2), parametername= S, quantity= flow_scale
+setasparameter; object= Aggregate_storage_layer (1) - Catch basin (2), parametername= I0, quantity= threshold
+setasparameter; object= Aggregate_storage_layer (1) - Catch basin (2), parametername= tau_k, quantity= kernel_delay_parameter

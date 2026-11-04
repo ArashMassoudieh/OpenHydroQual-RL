@@ -1,0 +1,1 @@
+{'features': ['outflow'], 'failed': False, 'train': {'J': np.float64(2.6538278459962887), 'Excess_rel': np.float64(1.932688351467664), 'Age_rel': np.float64(0.7211394945286249)}, 'test': {'J': np.float64(1.7517845871761248), 'Excess_rel': np.float64(1.151864809980177), 'Age_rel': np.float64(0.5999197771959479)}}

@@ -1,0 +1,10 @@
+{
+ "qlim": 50.0,
+ "valve_area": 0.031415000000000005,
+ "outlet": "Catch basin (2) - fixed_head (3)",
+ "valve": "Aggregate_storage_layer (1) - Catch basin (2)",
+ "sources": {
+  "rule": "/home/arash/Dropbox/St. Francis RTC paper/Exceedance 1m Weir Runs 2026/rt_campaign/models/R1_f0.50_half_30.2mm/sigma_0_ts_2/model.ohq",
+  "passive": "/home/arash/Dropbox/St. Francis RTC paper/Exceedance 1m Weir Runs 2026/rt_campaign/step_check/passive_s0025_half/model.ohq"
+ }
+}
